@@ -228,7 +228,7 @@ func _draw() -> void:
 
 	if _has_projectile and _projectile_duration > 0.0:
 		var t: float = clampf(_projectile_progress / _projectile_duration, 0.0, 1.0)
-		var arc_height: float = 45.0
+		var arc_height: float = 50.0
 		var current_world_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
 		current_world_pos += Vector2(0.0, -arc_height * sin(t * PI))
 		var current_pos: Vector2 = to_local(current_world_pos)
@@ -236,8 +236,15 @@ func _draw() -> void:
 		if proj_dir.length() > 0.001:
 			var angle: float = proj_dir.angle()
 			var arrow_color := Color(1.0, 0.9, 0.4) if team == controller.PLAYER_TEAM else Color(1.0, 0.6, 0.3)
-			draw_circle(current_pos, 6.0, arrow_color)
-			draw_line(current_pos, current_pos - proj_dir * 16.0, arrow_color, 5.0)
-			var arrowhead := Vector2(cos(angle), sin(angle)) * 14.0
-			draw_line(current_pos - proj_dir * 10.0, current_pos + arrowhead.rotated(2.6) - proj_dir * 4.0, arrow_color, 4.0)
-			draw_line(current_pos - proj_dir * 10.0, current_pos + arrowhead.rotated(-2.6) - proj_dir * 4.0, arrow_color, 4.0)
+			draw_circle(current_pos, 8.0, arrow_color)
+			draw_line(current_pos, current_pos - proj_dir * 18.0, arrow_color, 5.0)
+			var arrowhead := Vector2(cos(angle), sin(angle)) * 16.0
+			draw_line(current_pos - proj_dir * 12.0, current_pos + arrowhead.rotated(2.6) - proj_dir * 5.0, arrow_color, 4.0)
+			draw_line(current_pos - proj_dir * 12.0, current_pos + arrowhead.rotated(-2.6) - proj_dir * 5.0, arrow_color, 4.0)
+			for trail in range(3):
+				var trail_t: float = max(0.0, t - trail * 0.08)
+				var trail_pos: Vector2 = _projectile_pos.lerp(_projectile_target, trail_t)
+				trail_pos += Vector2(0.0, -arc_height * sin(trail_t * PI))
+				var trail_local: Vector2 = to_local(trail_pos)
+				var trail_alpha: float = (1.0 - trail_t) * 0.4 * (1.0 - trail * 0.25)
+				draw_circle(trail_local, 4.0 - trail * 1.2, Color(arrow_color.r, arrow_color.g, arrow_color.b, trail_alpha))

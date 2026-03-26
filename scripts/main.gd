@@ -2,8 +2,8 @@ extends Node2D
 
 const BattleUnit = preload("res://scripts/battle_unit.gd")
 const BattleBuilding = preload("res://scripts/battle_building.gd")
-const DeckManager = preload("res://scripts/DeckManager.gd")
-const BattleNavigator = preload("res://scripts/BattleNavigator.gd")
+const DeckManagerClass = preload("res://scripts/DeckManager.gd")
+const BattleNavigatorClass = preload("res://scripts/BattleNavigator.gd")
 
 const TEXTURE_ASSET_MAP := {
 	"res://assets/units/knight.svg": preload("res://assets/units/knight.svg"),
@@ -97,10 +97,25 @@ var troop_defs := {
 		"cooldown": 1.2,
 		"radius": 18.0,
 		"color": Color(0.77, 0.42, 0.99)
+	},
+	"wizard": {
+		"id": "wizard",
+		"name": "Wizard",
+		"ui_name": "Wizard",
+		"cost": 5,
+		"hp": 340.0,
+		"speed": 72.0,
+		"range": 145.0,
+		"damage": 130.0,
+		"splash_damage": 90.0,
+		"splash_radius": 65.0,
+		"cooldown": 1.1,
+		"radius": 16.0,
+		"color": Color(0.25, 0.58, 0.95)
 	}
 }
 
-var enemy_deck = ["knight", "archer", "giant", "mini_pekka"]
+var enemy_deck = ["knight", "archer", "giant", "wizard"]
 
 var player_elixir := 5.0
 var enemy_elixir := 5.0
@@ -133,6 +148,12 @@ var _card_style_cache: Dictionary = {}
 var _battle_entities: Array[Node] = []
 var _battle_units: Array[Node] = []
 var _battle_buildings: Array[Node] = []
+
+
+func get_battle_entities() -> Array:
+	return _battle_entities
+
+
 var _sfx_players: Array[AudioStreamPlayer] = []
 var _sfx_cursor := 0
 var _attack_sfx_light: AudioStreamWAV
@@ -227,7 +248,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _load_card_icons() -> void:
-	var all_cards := ["knight", "archer", "giant", "mini_pekka"]
+	var all_cards := ["knight", "archer", "giant", "mini_pekka", "wizard"]
 	for card_id in all_cards:
 		card_icon_textures[card_id] = load_svg_texture("res://assets/units/%s.svg" % card_id, 1.35)
 

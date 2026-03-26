@@ -16,6 +16,8 @@ var attack_cooldown: float = 1.0
 var radius: float = 18.0
 var color: Color = Color.WHITE
 var targets_buildings_only: bool = false
+var splash_damage: float = 0.0
+var splash_radius: float = 0.0
 var is_dead: bool = false
 var current_target: Node = null
 var icon_texture: Texture2D = null
@@ -41,6 +43,13 @@ var _projectile_progress: float = 0.0
 var _projectile_duration: float = 0.0
 var _has_projectile: bool = false
 var _projectile_target_node: Node = null
+var _dying: bool = false
+var _death_timer: float = 0.0
+var _death_duration: float = 0.35
+var _death_explosion: bool = false
+var _splash_effect_timer: float = 0.0
+var _splash_effect_pos: Vector2 = Vector2.ZERO
+var _splash_effect_radius: float = 0.0
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -59,6 +68,8 @@ func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_positi
 	radius = float(config.get("radius", 18.0))
 	color = config.get("color", Color.WHITE)
 	targets_buildings_only = bool(config.get("targets_buildings_only", false))
+	splash_damage = float(config.get("splash_damage", 0.0))
+	splash_radius = float(config.get("splash_radius", 0.0))
 	icon_texture = controller.load_svg_texture("res://assets/units/%s.svg" % troop_id, 1.65)
 	position = spawn_position
 	_lane_side_preference = -1.0 if int(get_instance_id()) % 2 == 0 else 1.0
@@ -67,7 +78,19 @@ func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_positi
 
 
 func _process(delta: float) -> void:
-	if is_dead or controller == null:
+	if is_dead and not _dying:
+		return
+	if _dying:
+		_death_timer -= delta
+		_visual_dirty = true
+		if _death_timer <= 0.0:
+			_dying = false
+			is_dead = true
+			if controller != null:
+				controller.on_entity_destroyed(self)
+			queue_free()
+		else:
+			queue_redraw()
 		return
 	if current_target != null and not is_instance_valid(current_target):
 		current_target = null
@@ -79,6 +102,10 @@ func _process(delta: float) -> void:
 		_visual_dirty = true
 	if _projectile_target_node != null and not is_instance_valid(_projectile_target_node):
 		_projectile_target_node = null
+
+	if _splash_effect_timer > 0.0:
+		_splash_effect_timer -= delta
+		_visual_dirty = true
 
 	_attack_timer = max(_attack_timer - delta, 0.0)
 	_retarget_timer = max(_retarget_timer - delta, 0.0)
@@ -99,6 +126,8 @@ func _process(delta: float) -> void:
 			if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
 				_projectile_target_node.take_damage(damage, self)
 				controller.on_damage_dealt(_projectile_target_node, self)
+				if splash_damage > 0.0 and splash_radius > 0.0:
+					_apply_splash_damage(_projectile_target_node.global_position)
 			_has_projectile = false
 			_projectile_progress = 0.0
 			_projectile_target_node = null
@@ -187,6 +216,8 @@ func _resolve_attack() -> void:
 	else:
 		resolved_target.take_damage(damage, self)
 		controller.on_damage_dealt(resolved_target, self)
+		if splash_damage > 0.0 and splash_radius > 0.0:
+			_apply_splash_damage(resolved_target.global_position)
 	_attack_timer = attack_cooldown
 	_recovery_duration = min(0.18, attack_cooldown * 0.22)
 	_recovery_timer = _recovery_duration
@@ -198,6 +229,25 @@ func get_focus_target() -> Node:
 	if _focus_target != null and is_instance_valid(_focus_target) and not _focus_target.is_dead:
 		return _focus_target
 	return null
+
+
+func _apply_splash_damage(center: Vector2) -> void:
+	if controller == null:
+		return
+	_splash_effect_pos = center
+	_splash_effect_radius = splash_radius
+	_splash_effect_timer = 0.4
+	_visual_dirty = true
+	var entities: Array = controller.get_battle_entities()
+	for entity in entities:
+		if entity == self or entity.is_dead or entity.team == team:
+			continue
+		var dist: float = center.distance_to(entity.global_position)
+		if dist <= splash_radius:
+			var splash_fraction: float = 1.0 - (dist / splash_radius) * 0.5
+			var actual_damage: float = splash_damage * splash_fraction
+			entity.take_damage(actual_damage, self)
+			controller.on_damage_dealt(entity, self)
 
 
 func get_sight_radius() -> float:
@@ -293,9 +343,17 @@ func take_damage(amount: float, attacker: Node = null) -> void:
 	if hp <= 0.0:
 		hp = 0.0
 		is_dead = true
-		if controller != null:
-			controller.on_entity_destroyed(self)
-		queue_free()
+		_dying = true
+		_death_timer = _death_duration
+		_death_explosion = radius >= 22.0 or damage >= 120.0
+		z_index = 2
+		current_target = null
+		_pending_target = null
+		_focus_target = null
+		_projectile_target_node = null
+		_hitstun_timer = 0.0
+		_visual_dirty = true
+		queue_redraw()
 	else:
 		queue_redraw()
 
@@ -369,3 +427,33 @@ func _draw() -> void:
 			var arrowhead := Vector2(cos(angle), sin(angle)) * 12.0
 			draw_line(current_pos - proj_dir * 8.0, current_pos + arrowhead.rotated(2.6) - proj_dir * 3.0, arrow_color, 3.5)
 			draw_line(current_pos - proj_dir * 8.0, current_pos + arrowhead.rotated(-2.6) - proj_dir * 3.0, arrow_color, 3.5)
+
+	if _dying:
+		var death_progress: float = 1.0 - clampf(_death_timer / maxf(_death_duration, 0.001), 0.0, 1.0)
+		var alpha: float = 1.0 - death_progress
+		var expand_scale: float = 1.0 + 0.6 * death_progress
+		if _death_explosion:
+			for ring in range(3):
+				var ring_radius: float = radius * (1.0 + death_progress * (1.5 + ring * 0.8))
+				var ring_alpha: float = (1.0 - death_progress) * 0.7 * (1.0 - ring * 0.25)
+				var ring_color: Color = Color(1.0, 0.6 + ring * 0.1, 0.2 + ring * 0.1, ring_alpha)
+				draw_circle(Vector2.ZERO, ring_radius, ring_color)
+			draw_circle(Vector2.ZERO, radius * 0.6 * expand_scale, Color(1.0, 0.85, 0.5, alpha * 0.8))
+		else:
+			for ring in range(2):
+				var ring_radius: float = radius * (1.0 + death_progress * (1.2 + ring * 0.6))
+				var ring_alpha: float = (1.0 - death_progress) * 0.5 * (1.0 - ring * 0.3)
+				draw_circle(Vector2.ZERO, ring_radius, Color(1.0, 0.7, 0.4, ring_alpha))
+			draw_circle(Vector2.ZERO, radius * 0.5 * expand_scale, Color(1.0, 0.9, 0.6, alpha * 0.6))
+
+	if _splash_effect_timer > 0.0 and _splash_effect_radius > 0.0:
+		var splash_t: float = 1.0 - clampf(_splash_effect_timer / 0.4, 0.0, 1.0)
+		var splash_local_pos: Vector2 = to_local(_splash_effect_pos)
+		var splash_current_radius: float = _splash_effect_radius * (0.3 + splash_t * 0.7)
+		var splash_alpha: float = (1.0 - splash_t) * 0.6
+		for wave in range(2):
+			var wave_radius: float = splash_current_radius * (1.0 + wave * 0.4)
+			var wave_alpha: float = splash_alpha * (1.0 - wave * 0.35)
+			var wave_color := Color(0.35, 0.55, 1.0, wave_alpha)
+			draw_circle(splash_local_pos, wave_radius, wave_color, false, 3.0)
+		draw_circle(splash_local_pos, splash_current_radius * 0.3, Color(0.7, 0.85, 1.0, splash_alpha * 0.8))
