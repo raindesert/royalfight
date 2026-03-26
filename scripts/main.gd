@@ -2,7 +2,9 @@ extends Node2D
 
 const BattleUnit = preload("res://scripts/battle_unit.gd")
 const BattleBuilding = preload("res://scripts/battle_building.gd")
-const PLAYER_DECK_TEMPLATE := ["knight", "archer", "giant", "mini_pekka", "knight", "archer", "giant", "mini_pekka"]
+const DeckManager = preload("res://scripts/DeckManager.gd")
+const BattleNavigator = preload("res://scripts/BattleNavigator.gd")
+
 const TEXTURE_ASSET_MAP := {
 	"res://assets/units/knight.svg": preload("res://assets/units/knight.svg"),
 	"res://assets/units/archer.svg": preload("res://assets/units/archer.svg"),
@@ -98,10 +100,6 @@ var troop_defs := {
 	}
 }
 
-var player_deck = PLAYER_DECK_TEMPLATE.duplicate()
-var player_hand = []
-var next_card_preview = ""
-
 var enemy_deck = ["knight", "archer", "giant", "mini_pekka"]
 
 var player_elixir := 5.0
@@ -119,13 +117,14 @@ var king_awake := {
 	ENEMY_TEAM: false
 }
 
+var _deck_manager: DeckManager
+var _navigator: BattleNavigator
 var ui_layer: CanvasLayer
 var elixir_label: Label
 var enemy_elixir_label: Label
 var status_label: Label
 var selected_label: Label
 var restart_button: Button
-var card_buttons: Dictionary = {}
 var card_icon_textures: Dictionary = {}
 var hand_slot_buttons: Array[Button] = []
 var next_card_preview_button: Button
@@ -144,49 +143,30 @@ var _hit_sfx_heavy: AudioStreamWAV
 
 func _ready() -> void:
 	randomize()
+	_init_deck_manager()
+	_init_navigator()
 	_setup_audio()
 	_load_card_icons()
-	_setup_deck()
 	_setup_ui()
 	_spawn_towers()
 	queue_redraw()
 
 
-func _setup_deck() -> void:
-	_shuffle_deck()
-	_draw_initial_hand()
+func _init_deck_manager() -> void:
+	_deck_manager = DeckManager.new()
+	add_child(_deck_manager)
+	_deck_manager.init(troop_defs)
+	_deck_manager.hand_updated.connect(_on_deck_hand_updated)
 
 
-func _shuffle_deck() -> void:
-	player_deck.shuffle()
+func _init_navigator() -> void:
+	_navigator = BattleNavigator.new()
+	add_child(_navigator)
+	_navigator.init(_battle_buildings)
 
 
-func _draw_initial_hand() -> void:
-	for i in range(4):
-		if player_deck.is_empty():
-			break
-		var card_id = player_deck.pop_front()
-		if card_id != null:
-			player_hand.append(card_id)
-	_refresh_next_preview()
-
-
-func _draw_one_card() -> void:
-	if player_deck.is_empty():
-		player_deck = PLAYER_DECK_TEMPLATE.duplicate()
-		player_deck.shuffle()
-	if not player_deck.is_empty():
-		var card_id = player_deck.pop_front()
-		if card_id != null:
-			player_hand.append(card_id)
-	_refresh_next_preview()
-
-
-func _refresh_next_preview() -> void:
-	if player_deck.is_empty():
-		next_card_preview = player_hand[0] if not player_hand.is_empty() else ""
-	else:
-		next_card_preview = player_deck[0]
+func _on_deck_hand_updated() -> void:
+	queue_redraw()
 
 
 func _process(delta: float) -> void:
@@ -227,7 +207,7 @@ func _draw_lane_guides() -> void:
 
 func _draw_bridges() -> void:
 	for lane in [LANE_LEFT, LANE_RIGHT]:
-		var bridge_rect := get_bridge_rect(lane)
+		var bridge_rect := _navigator.get_bridge_rect(lane)
 		draw_rect(bridge_rect, Color(0.61, 0.48, 0.32))
 		draw_rect(bridge_rect, Color(0.32, 0.22, 0.1, 0.85), false, 3.0)
 		for plank in range(5):
@@ -327,7 +307,6 @@ func _setup_ui() -> void:
 		button.pressed.connect(_on_hand_slot_pressed.bind(i))
 		ui_layer.add_child(button)
 		hand_slot_buttons.append(button)
-		card_buttons["slot_%d" % i] = button
 		x += 155.0
 	restart_button = Button.new()
 	restart_button.text = "Restart Battle"
@@ -350,10 +329,11 @@ func _update_ui() -> void:
 
 
 func _update_hand_slots() -> void:
+	var hand: Array = _deck_manager.hand
 	for i in range(4):
 		var button: Button = hand_slot_buttons[i]
-		if i < player_hand.size():
-			var card_id: String = player_hand[i]
+		if i < hand.size():
+			var card_id: String = hand[i]
 			var cost: int = int(troop_defs[card_id]["cost"])
 			var disabled := battle_over or player_elixir < float(cost)
 			var selected := i == selected_hand_index
@@ -376,9 +356,10 @@ func _update_hand_slots() -> void:
 
 
 func _update_next_preview() -> void:
-	if next_card_preview != "":
-		next_card_preview_button.icon = card_icon_textures.get(next_card_preview, null)
-		next_card_preview_button.text = str(troop_defs[next_card_preview].get("ui_name", troop_defs[next_card_preview]["name"]))
+	var preview: String = _deck_manager.next_card_preview
+	if preview != "":
+		next_card_preview_button.icon = card_icon_textures.get(preview, null)
+		next_card_preview_button.text = str(troop_defs[preview].get("ui_name", troop_defs[preview]["name"]))
 		var style := _get_card_stylebox("preview:disabled", Color(0.2, 0.2, 0.24), Color(1.0, 1.0, 1.0, 0.1))
 		next_card_preview_button.add_theme_stylebox_override("disabled", style)
 	else:
@@ -430,6 +411,7 @@ func _register_entity(entity: Node) -> void:
 		_battle_units.append(entity)
 	else:
 		_battle_buildings.append(entity)
+		_navigator.init(_battle_buildings)
 
 
 func _unregister_entity(entity: Node) -> void:
@@ -438,6 +420,7 @@ func _unregister_entity(entity: Node) -> void:
 		_battle_units.erase(entity)
 	else:
 		_battle_buildings.erase(entity)
+		_navigator.init(_battle_buildings)
 
 
 func _spawn_towers() -> void:
@@ -450,10 +433,11 @@ func _spawn_towers() -> void:
 
 
 func _try_player_deploy(world_pos: Vector2, hand_index: int) -> void:
-	if hand_index < 0 or hand_index >= player_hand.size():
+	var hand: Array = _deck_manager.hand
+	if hand_index < 0 or hand_index >= hand.size():
 		status_text = "Invalid card slot."
 		return
-	var card_id: String = player_hand[hand_index]
+	var card_id: String = hand[hand_index]
 	var cost := float(troop_defs[card_id]["cost"])
 	if player_elixir < cost:
 		status_text = "Not enough elixir."
@@ -465,12 +449,11 @@ func _try_player_deploy(world_pos: Vector2, hand_index: int) -> void:
 		status_text = "You can only deploy on your half of the arena."
 		return
 	var lane := _lane_for_x(world_pos.x)
-	var spawn_pos := _get_player_deploy_position(world_pos, lane)
+	var spawn_pos := _navigator._get_player_deploy_position(world_pos, lane)
 	player_elixir -= cost
 	_spawn_troop(card_id, PLAYER_TEAM, lane, spawn_pos)
 	status_text = "%s deployed on %s lane." % [troop_defs[card_id]["name"], lane]
-	player_hand.remove_at(hand_index)
-	_draw_one_card()
+	_deck_manager.remove_card_from_hand(hand_index)
 	selected_card_id = ""
 	selected_hand_index = -1
 
@@ -486,13 +469,13 @@ func _enemy_play() -> void:
 	var card_id := affordable[randi() % affordable.size()]
 	var lane := LANE_LEFT if randi() % 2 == 0 else LANE_RIGHT
 	enemy_elixir -= float(troop_defs[card_id]["cost"])
-	_spawn_troop(card_id, ENEMY_TEAM, lane, _get_enemy_deploy_position(lane))
+	_spawn_troop(card_id, ENEMY_TEAM, lane, _navigator._get_enemy_deploy_position(lane))
 	status_text = "Enemy deployed %s on %s lane." % [troop_defs[card_id]["name"], lane]
 	ai_play_timer = randf_range(1.8, 3.7)
 
 
 func _spawn_troop(card_id: String, team: int, lane: String, spawn_pos: Vector2) -> void:
-	var troop := BattleUnit.new()
+	var troop: Node = BattleUnit.new()
 	var unit_config: Dictionary = troop_defs[card_id].duplicate(true)
 	unit_config["lane"] = lane
 	troop.setup(unit_config, team, self, spawn_pos)
@@ -501,7 +484,7 @@ func _spawn_troop(card_id: String, team: int, lane: String, spawn_pos: Vector2) 
 
 
 func _spawn_building(config: Dictionary, team: int, spawn_pos: Vector2) -> void:
-	var building := BattleBuilding.new()
+	var building: Node = BattleBuilding.new()
 	building.setup(config, team, self, spawn_pos)
 	_register_entity(building)
 	add_child(building)
@@ -511,96 +494,6 @@ func _lane_for_x(x: float) -> String:
 	var left_distance: float = absf(x - float(LANE_X[LANE_LEFT]))
 	var right_distance: float = absf(x - float(LANE_X[LANE_RIGHT]))
 	return LANE_LEFT if left_distance <= right_distance else LANE_RIGHT
-
-
-func get_bridge_rect(lane: String) -> Rect2:
-	return Rect2(Vector2(LANE_X[lane] - BRIDGE_WIDTH * 0.5, RIVER_Y - BRIDGE_HEIGHT * 0.5), Vector2(BRIDGE_WIDTH, BRIDGE_HEIGHT))
-
-
-func _get_lane_spawn_x(raw_x: float, lane: String) -> float:
-	var lane_center_x: float = LANE_X[lane]
-	return lane_center_x + clampf(raw_x - lane_center_x, -LANE_DEPLOY_HALF_WIDTH, LANE_DEPLOY_HALF_WIDTH)
-
-
-func _get_player_deploy_position(world_pos: Vector2, lane: String) -> Vector2:
-	var spawn_x: float = _get_lane_spawn_x(world_pos.x, lane)
-	var spawn_y: float = clampf(world_pos.y, PLAYER_DEPLOY_Y + 22.0, ARENA_RECT.end.y - 24.0)
-	return Vector2(spawn_x, spawn_y)
-
-
-func _get_enemy_deploy_position(lane: String) -> Vector2:
-	var spawn_x: float = _get_lane_spawn_x(float(LANE_X[lane]) + randf_range(-42.0, 42.0), lane)
-	var spawn_y: float = randf_range(ARENA_RECT.position.y + 24.0, ENEMY_DEPLOY_Y - 20.0)
-	return Vector2(spawn_x, spawn_y)
-
-
-func get_navigation_target_for_unit(unit: Node, desired_target: Vector2) -> Vector2:
-	if unit == null or unit.lane == LANE_CENTER:
-		return desired_target
-	var lane_x: float = float(LANE_X[unit.lane])
-	if unit.team == PLAYER_TEAM and desired_target.y < RIVER_Y - RIVER_HALF_HEIGHT:
-		if unit.global_position.y > BRIDGE_Y[PLAYER_TEAM] + BRIDGE_NAV_TOLERANCE:
-			return Vector2(lane_x, BRIDGE_Y[PLAYER_TEAM])
-		if unit.global_position.y > BRIDGE_Y[ENEMY_TEAM] + BRIDGE_NAV_TOLERANCE:
-			return Vector2(lane_x, BRIDGE_Y[ENEMY_TEAM])
-	elif unit.team == ENEMY_TEAM and desired_target.y > RIVER_Y + RIVER_HALF_HEIGHT:
-		if unit.global_position.y < BRIDGE_Y[ENEMY_TEAM] - BRIDGE_NAV_TOLERANCE:
-			return Vector2(lane_x, BRIDGE_Y[ENEMY_TEAM])
-		if unit.global_position.y < BRIDGE_Y[PLAYER_TEAM] - BRIDGE_NAV_TOLERANCE:
-			return Vector2(lane_x, BRIDGE_Y[PLAYER_TEAM])
-	return desired_target
-
-
-func _is_river_blocked_for_unit(unit: Node, candidate_position: Vector2) -> bool:
-	if unit == null or unit.lane == LANE_CENTER:
-		return false
-	var river_top: float = RIVER_Y - RIVER_HALF_HEIGHT
-	var river_bottom: float = RIVER_Y + RIVER_HALF_HEIGHT
-	if candidate_position.y + unit.radius <= river_top or candidate_position.y - unit.radius >= river_bottom:
-		return false
-	var bridge_half_width: float = BRIDGE_WIDTH * 0.5 - maxf(6.0, unit.radius * 0.25)
-	return abs(candidate_position.x - LANE_X[unit.lane]) > bridge_half_width
-
-
-func constrain_unit_position(unit: Node, candidate_position: Vector2) -> Vector2:
-	if unit == null:
-		return candidate_position
-	var constrained: Vector2 = candidate_position
-	constrained.x = clampf(constrained.x, ARENA_RECT.position.x + unit.radius, ARENA_RECT.end.x - unit.radius)
-	constrained.y = clampf(constrained.y, ARENA_RECT.position.y + unit.radius, ARENA_RECT.end.y - unit.radius)
-	if _is_river_blocked_for_unit(unit, constrained):
-		var bridge_half_width: float = BRIDGE_WIDTH * 0.5 - maxf(6.0, unit.radius * 0.25)
-		constrained.x = clampf(constrained.x, LANE_X[unit.lane] - bridge_half_width, LANE_X[unit.lane] + bridge_half_width)
-		if _is_river_blocked_for_unit(unit, constrained):
-			constrained.y = RIVER_Y - RIVER_HALF_HEIGHT - unit.radius if constrained.y < RIVER_Y else RIVER_Y + RIVER_HALF_HEIGHT + unit.radius
-	return constrained
-
-
-func get_lane_path_for_unit(unit: Node) -> Array[Vector2]:
-	var lane: String = unit.lane
-	var lane_x: float = LANE_X[lane]
-	var waypoints: Array[Vector2] = []
-	if unit.team == PLAYER_TEAM:
-		waypoints.append(Vector2(lane_x, FRONTLINE_Y[PLAYER_TEAM]))
-		waypoints.append(Vector2(lane_x, BRIDGE_Y[PLAYER_TEAM]))
-		waypoints.append(Vector2(lane_x, BRIDGE_Y[ENEMY_TEAM]))
-		var enemy_tower = get_lane_tower(unit.enemy_team, lane)
-		if enemy_tower != null:
-			waypoints.append(enemy_tower.global_position)
-		var enemy_king = get_king_tower(unit.enemy_team)
-		if enemy_king != null:
-			waypoints.append(enemy_king.global_position)
-	else:
-		waypoints.append(Vector2(lane_x, FRONTLINE_Y[ENEMY_TEAM]))
-		waypoints.append(Vector2(lane_x, BRIDGE_Y[ENEMY_TEAM]))
-		waypoints.append(Vector2(lane_x, BRIDGE_Y[PLAYER_TEAM]))
-		var player_tower = get_lane_tower(unit.enemy_team, lane)
-		if player_tower != null:
-			waypoints.append(player_tower.global_position)
-		var player_king = get_king_tower(unit.enemy_team)
-		if player_king != null:
-			waypoints.append(player_king.global_position)
-	return waypoints
 
 
 func update_unit_target(unit: Node, current_target, force_retarget: bool) -> Node:
@@ -665,20 +558,6 @@ func choose_target_for_building(building: Node) -> Node:
 			best_score = score
 			best_target = entity
 	return best_target
-
-
-func get_lane_tower(team: int, lane: String) -> Node:
-	for entity in _battle_buildings:
-		if entity.entity_kind == "building" and not entity.is_dead and entity.team == team and entity.lane == lane and not entity.is_king:
-			return entity
-	return null
-
-
-func get_king_tower(team: int) -> Node:
-	for entity in _battle_buildings:
-		if entity.entity_kind == "building" and not entity.is_dead and entity.team == team and entity.is_king:
-			return entity
-	return null
 
 
 func is_king_tower_awake(team: int) -> bool:
@@ -801,23 +680,6 @@ func get_unit_separation(unit: Node) -> Vector2:
 	return push
 
 
-func can_move_to_position(unit: Node, candidate_position: Vector2) -> bool:
-	if unit == null:
-		return false
-	var constrained := constrain_unit_position(unit, candidate_position)
-	if constrained.distance_to(candidate_position) > 0.05:
-		return false
-	for entity in _battle_units:
-		if entity == unit:
-			continue
-		if entity.is_dead or entity.entity_kind != "unit" or entity.team != unit.team or entity.lane != unit.lane:
-			continue
-		var min_distance: float = unit.radius + entity.radius + 2.0
-		if candidate_position.distance_to(entity.global_position) < min_distance:
-			return false
-	return true
-
-
 func on_entity_destroyed(entity: Node) -> void:
 	_unregister_entity(entity)
 	for other in _battle_entities.duplicate():
@@ -853,12 +715,29 @@ func _check_victory() -> void:
 		winner_text = "Defeat! Your King Tower fell."
 
 
+func constrain_unit_position(unit: Node, candidate_position: Vector2) -> Vector2:
+	return _navigator.constrain_unit_position(unit, candidate_position)
+
+
+func can_move_to_position(unit: Node, candidate_position: Vector2) -> bool:
+	return _navigator.can_move_to_position(unit, candidate_position, _battle_units)
+
+
+func get_navigation_target_for_unit(unit: Node, desired_target: Vector2) -> Vector2:
+	return _navigator.get_navigation_target_for_unit(unit, desired_target)
+
+
+func get_lane_path_for_unit(unit: Node) -> Array[Vector2]:
+	return _navigator.get_lane_path_for_unit(unit)
+
+
 func _on_hand_slot_pressed(slot_index: int) -> void:
 	if battle_over:
 		return
-	if slot_index < 0 or slot_index >= player_hand.size():
+	var hand: Array = _deck_manager.hand
+	if slot_index < 0 or slot_index >= hand.size():
 		return
-	var card_id: String = player_hand[slot_index]
+	var card_id: String = hand[slot_index]
 	var cost: float = troop_defs[card_id]["cost"]
 	if player_elixir < cost:
 		status_text = "Not enough elixir."

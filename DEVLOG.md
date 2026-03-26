@@ -113,13 +113,35 @@
 - 战场常量与卡牌定义。
 - UI 创建和更新。
 - 玩家部署和敌方 AI 出兵。
-- 兵线路径与桥梁导航。
 - 单位、建筑索敌辅助。
 - 音效创建与播放。
 - 贴图 / SVG 资源缓存。
 - 实体注册、销毁和整局胜负流程。
 
-它现在是项目里的主控制器。随着项目继续增长，未来最值得拆分的就是它。
+它现在是项目里的主控制器。通过 `DeckManager` 和 `BattleNavigator` 子模块分担部分职责。
+
+### `scripts/DeckManager.gd`
+
+职责：
+- 牌组初始化与洗牌。
+- 手牌管理（抽卡、轮转、补牌）。
+- 下一张预览。
+- 牌库耗尽自动重洗。
+
+使用信号 `hand_updated` 通知 UI 更新。
+
+### `scripts/BattleNavigator.gd`
+
+职责：
+- 战场边界约束。
+- 河流、桥梁通行逻辑。
+- 单位路径点计算（兵线导航）。
+- 敌方塔位置查询。
+
+主要方法：
+- `constrain_unit_position()` — 限制单位在合法区域内移动
+- `get_navigation_target_for_unit()` — 获取单位过河时的导航目标
+- `get_lane_path_for_unit()` — 获取单位的路径点列表
 
 ### `scripts/battle_unit.gd`
 
