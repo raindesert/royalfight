@@ -1,4 +1,4 @@
-﻿extends Node2D
+extends Node2D
 
 var entity_kind := "building"
 var controller: Node = null
@@ -25,6 +25,13 @@ var _recovery_timer: float = 0.0
 var _recovery_duration: float = 0.001
 var _pending_target: Node = null
 var _hitflash_timer: float = 0.0
+var _visual_dirty := false
+var _last_hp: float = 0.0
+var _projectile_pos := Vector2.ZERO
+var _projectile_target := Vector2.ZERO
+var _projectile_progress: float = 0.0
+var _projectile_duration: float = 0.0
+var _has_projectile: bool = false
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -54,8 +61,20 @@ func _process(delta: float) -> void:
 	if _pending_target != null and not is_instance_valid(_pending_target):
 		_pending_target = null
 		_windup_timer = 0.0
+		_visual_dirty = true
+	if _has_projectile:
+		_projectile_progress += delta
+		_visual_dirty = true
+		if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
+			_projectile_target = _pending_target.global_position - global_position
+		if _projectile_progress >= _projectile_duration:
+			if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
+				_pending_target.take_damage(damage, self)
+				controller.on_damage_dealt(_pending_target, self)
+			_has_projectile = false
+			_projectile_progress = 0.0
 	if is_king and not controller.is_king_tower_awake(team):
-		queue_redraw()
+		_request_redraw()
 		return
 	_attack_timer = max(_attack_timer - delta, 0.0)
 	_windup_timer = max(_windup_timer - delta, 0.0)
@@ -64,19 +83,26 @@ func _process(delta: float) -> void:
 
 	if _pending_target != null:
 		if _windup_timer > 0.0:
-			queue_redraw()
+			_visual_dirty = true
+			_request_redraw()
 			return
-		_resolve_attack()
-		queue_redraw()
-		return
+		if not _has_projectile:
+			_resolve_attack()
+			_visual_dirty = true
+			_request_redraw()
+			return
+		else:
+			_request_redraw()
+			return
 
 	if _recovery_timer > 0.0:
-		queue_redraw()
+		_visual_dirty = true
+		_request_redraw()
 		return
 
 	var target: Node = controller.choose_target_for_building(self)
 	if target == null:
-		queue_redraw()
+		_request_redraw()
 		return
 	var distance: float = global_position.distance_to(target.global_position)
 	if distance <= attack_range + target.radius:
@@ -84,15 +110,31 @@ func _process(delta: float) -> void:
 			_pending_target = target
 			_windup_duration = min(0.22, attack_cooldown * 0.28)
 			_windup_timer = _windup_duration
+			_visual_dirty = true
 			controller.play_attack_sfx(self)
-	queue_redraw()
+	_request_redraw()
+
+
+func _request_redraw() -> void:
+	if _visual_dirty or hp != _last_hp:
+		_last_hp = hp
+		_visual_dirty = false
+		queue_redraw()
 
 
 func _resolve_attack() -> void:
 	var resolved_target: Node = _pending_target
-	if resolved_target != null and is_instance_valid(resolved_target) and not resolved_target.is_dead:
-		resolved_target.take_damage(damage, self)
-		controller.on_damage_dealt(resolved_target, self)
+	if resolved_target == null or not is_instance_valid(resolved_target) or resolved_target.is_dead:
+		_attack_timer = attack_cooldown
+		_pending_target = null
+		_windup_timer = 0.0
+		return
+	_projectile_pos = Vector2.ZERO
+	_projectile_target = resolved_target.global_position - global_position
+	_projectile_progress = 0.0
+	var distance: float = _projectile_target.length()
+	_projectile_duration = max(0.15, distance / 420.0)
+	_has_projectile = true
 	_attack_timer = attack_cooldown
 	_recovery_duration = min(0.16, attack_cooldown * 0.2)
 	_recovery_timer = _recovery_duration
@@ -110,6 +152,7 @@ func take_damage(amount: float, _attacker: Node = null) -> void:
 	if is_dead:
 		return
 	hp -= amount
+	_visual_dirty = true
 	_hitflash_timer = 0.12
 	if hp <= 0.0:
 		hp = 0.0
@@ -175,6 +218,17 @@ func _draw() -> void:
 	var hp_ratio := 0.0 if max_hp <= 0.0 else hp / max_hp
 	draw_rect(Rect2(bar_rect.position, Vector2(bar_width * hp_ratio, 7.0)), Color(0.36, 0.9, 0.42))
 
-
-
-
+	if _has_projectile:
+		var t: float = _projectile_progress / _projectile_duration
+		var arc_height: float = 45.0
+		var current_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
+		current_pos += Vector2(0.0, -arc_height * sin(t * PI))
+		var proj_dir: Vector2 = (_projectile_target - _projectile_pos).normalized()
+		if proj_dir.length() > 0.001:
+			var angle: float = proj_dir.angle()
+			var arrow_color := Color(1.0, 0.9, 0.4) if team == controller.PLAYER_TEAM else Color(1.0, 0.6, 0.3)
+			draw_circle(current_pos, 6.0, arrow_color)
+			draw_line(current_pos, current_pos - proj_dir * 16.0, arrow_color, 5.0)
+			var arrowhead := Vector2(cos(angle), sin(angle)) * 14.0
+			draw_line(current_pos - proj_dir * 10.0, current_pos + arrowhead.rotated(2.6) - proj_dir * 4.0, arrow_color, 4.0)
+			draw_line(current_pos - proj_dir * 10.0, current_pos + arrowhead.rotated(-2.6) - proj_dir * 4.0, arrow_color, 4.0)

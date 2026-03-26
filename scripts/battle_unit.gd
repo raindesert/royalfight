@@ -1,4 +1,4 @@
-﻿extends Node2D
+extends Node2D
 
 var entity_kind := "unit"
 var controller: Node = null
@@ -33,6 +33,13 @@ var _pending_target: Node = null
 var _hitstun_timer: float = 0.0
 var _knockback_velocity := Vector2.ZERO
 var _attack_pose_dir := Vector2.UP
+var _visual_dirty := false
+var _last_hp: float = 0.0
+var _projectile_pos := Vector2.ZERO
+var _projectile_target := Vector2.ZERO
+var _projectile_progress: float = 0.0
+var _projectile_duration: float = 0.0
+var _has_projectile: bool = false
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -68,6 +75,7 @@ func _process(delta: float) -> void:
 	if _pending_target != null and not is_instance_valid(_pending_target):
 		_pending_target = null
 		_windup_timer = 0.0
+		_visual_dirty = true
 
 	_attack_timer = max(_attack_timer - delta, 0.0)
 	_retarget_timer = max(_retarget_timer - delta, 0.0)
@@ -78,19 +86,38 @@ func _process(delta: float) -> void:
 	_knockback_velocity = _knockback_velocity.move_toward(Vector2.ZERO, 520.0 * delta)
 	position += _knockback_velocity * delta
 
+	if _has_projectile:
+		_projectile_progress += delta
+		_visual_dirty = true
+		if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
+			_projectile_target = _pending_target.global_position - global_position
+		if _projectile_progress >= _projectile_duration:
+			if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
+				_pending_target.take_damage(damage, self)
+				controller.on_damage_dealt(_pending_target, self)
+			_has_projectile = false
+			_projectile_progress = 0.0
+
 	if _focus_timer <= 0.0:
 		_focus_target = null
 
 	if _pending_target != null:
 		if _windup_timer > 0.0:
-			queue_redraw()
+			_visual_dirty = true
+			_request_redraw()
 			return
-		_resolve_attack()
-		queue_redraw()
-		return
+		if not _has_projectile:
+			_resolve_attack()
+			_visual_dirty = true
+			_request_redraw()
+			return
+		else:
+			_request_redraw()
+			return
 
 	if _hitstun_timer > 0.0 or _recovery_timer > 0.0:
-		queue_redraw()
+		_visual_dirty = true
+		_request_redraw()
 		return
 
 	current_target = controller.update_unit_target(self, current_target, _retarget_timer <= 0.0)
@@ -111,7 +138,14 @@ func _process(delta: float) -> void:
 		_follow_lane_path(delta)
 
 	_apply_separation(delta)
-	queue_redraw()
+	_request_redraw()
+
+
+func _request_redraw() -> void:
+	if _visual_dirty or hp != _last_hp:
+		_last_hp = hp
+		_visual_dirty = false
+		queue_redraw()
 
 
 func _begin_attack(target: Node) -> void:
@@ -123,12 +157,26 @@ func _begin_attack(target: Node) -> void:
 	_attack_pose_dir = (target.global_position - global_position).normalized()
 	if _attack_pose_dir.length() <= 0.001:
 		_attack_pose_dir = Vector2.UP if team == controller.PLAYER_TEAM else Vector2.DOWN
+	_visual_dirty = true
 	controller.play_attack_sfx(self)
 
 
 func _resolve_attack() -> void:
 	var resolved_target: Node = _pending_target
-	if resolved_target != null and is_instance_valid(resolved_target) and not resolved_target.is_dead:
+	if resolved_target == null or not is_instance_valid(resolved_target) or resolved_target.is_dead:
+		_attack_timer = attack_cooldown
+		_pending_target = null
+		_windup_timer = 0.0
+		return
+	if attack_range > 40.0:
+		_projectile_pos = Vector2.ZERO
+		_projectile_target = resolved_target.global_position - global_position
+		_projectile_progress = 0.0
+		var distance: float = _projectile_target.length()
+		_projectile_duration = max(0.12, distance / 480.0)
+		_has_projectile = true
+		_visual_dirty = true
+	else:
 		resolved_target.take_damage(damage, self)
 		controller.on_damage_dealt(resolved_target, self)
 	_attack_timer = attack_cooldown
@@ -219,6 +267,7 @@ func take_damage(amount: float, attacker: Node = null) -> void:
 	if is_dead:
 		return
 	hp -= amount
+	_visual_dirty = true
 	if attacker != null:
 		remember_attacker(attacker)
 		var kb_dir: Vector2 = (global_position - attacker.global_position).normalized()
@@ -260,7 +309,7 @@ func _draw() -> void:
 		draw_offset += _knockback_velocity.normalized() * (2.0 * stun_t)
 	draw_set_transform(draw_offset, draw_rotation, draw_scale)
 
-	var plate_color := color if team == controller.PLAYER_TEAM else color.darkened(0.18)
+	var plate_color := color if team == controller.PLAYER_TEAM else color.darkened(0.22)
 	var plate_outer := plate_color.darkened(0.52)
 	var plate_inner := plate_color.darkened(0.12)
 	if _hitstun_timer > 0.0:
@@ -268,9 +317,15 @@ func _draw() -> void:
 	if _pending_target != null:
 		plate_inner = plate_inner.lightened(0.08)
 
+	var team_ring_color := Color(0.28, 0.58, 1.0) if team == controller.PLAYER_TEAM else Color(1.0, 0.38, 0.32)
+	if team == controller.ENEMY_TEAM:
+		team_ring_color = Color(0.95, 0.35, 0.28)
+		plate_inner = plate_inner.darkened(0.08)
+
 	draw_circle(Vector2(0.0, radius * 0.62), radius * 0.94, Color(0.03, 0.05, 0.07, 0.2))
 	draw_circle(Vector2.ZERO, radius + 3.0, plate_outer)
 	draw_circle(Vector2.ZERO, radius, plate_inner)
+	draw_circle(Vector2.ZERO, radius + 5.5, team_ring_color, false, 3.0)
 	draw_circle(Vector2(-radius * 0.18, -radius * 0.22), radius * 0.56, Color(1.0, 1.0, 1.0, 0.08))
 	if current_target != null:
 		draw_circle(Vector2.ZERO, radius + 6.0, Color(1.0, 0.95, 0.45, 0.18))
@@ -287,6 +342,17 @@ func _draw() -> void:
 	var hp_ratio := 0.0 if max_hp <= 0.0 else hp / max_hp
 	draw_rect(Rect2(bar_rect.position, Vector2(bar_width * hp_ratio, 6.0)), Color(0.36, 0.9, 0.42))
 
-
-
-
+	if _has_projectile:
+		var t: float = _projectile_progress / _projectile_duration
+		var arc_height: float = 35.0
+		var current_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
+		current_pos += Vector2(0.0, -arc_height * sin(t * PI))
+		var proj_dir: Vector2 = (_projectile_target - _projectile_pos).normalized()
+		if proj_dir.length() > 0.001:
+			var angle: float = proj_dir.angle()
+			var arrow_color := Color(1.0, 0.9, 0.4) if team == controller.PLAYER_TEAM else Color(1.0, 0.6, 0.3)
+			draw_circle(current_pos, 5.0, arrow_color)
+			draw_line(current_pos, current_pos - proj_dir * 14.0, arrow_color, 4.0)
+			var arrowhead := Vector2(cos(angle), sin(angle)) * 12.0
+			draw_line(current_pos - proj_dir * 8.0, current_pos + arrowhead.rotated(2.6) - proj_dir * 3.0, arrow_color, 3.5)
+			draw_line(current_pos - proj_dir * 8.0, current_pos + arrowhead.rotated(-2.6) - proj_dir * 3.0, arrow_color, 3.5)

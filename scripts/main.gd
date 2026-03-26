@@ -1,4 +1,4 @@
-﻿extends Node2D
+extends Node2D
 
 const BattleUnit = preload("res://scripts/battle_unit.gd")
 const BattleBuilding = preload("res://scripts/battle_building.gd")
@@ -79,14 +79,18 @@ var troop_defs := {
 	}
 }
 
-var player_deck: Array[String] = ["knight", "archer", "giant", "mini_pekka"]
-var enemy_deck: Array[String] = ["knight", "archer", "giant", "mini_pekka"]
+var player_deck = ["knight", "archer", "giant", "mini_pekka", "knight", "archer", "giant", "mini_pekka"]
+var player_hand = []
+var next_card_preview = ""
+
+var enemy_deck = ["knight", "archer", "giant", "mini_pekka"]
 
 var player_elixir := 5.0
 var enemy_elixir := 5.0
 var max_elixir := 10.0
 var elixir_regen := 0.9
 var selected_card_id := ""
+var selected_hand_index := -1
 var battle_over := false
 var winner_text := ""
 var status_text := "Select a card, then click left or right lane on your side."
@@ -104,6 +108,8 @@ var selected_label: Label
 var restart_button: Button
 var card_buttons: Dictionary = {}
 var card_icon_textures: Dictionary = {}
+var hand_slot_buttons: Array[Button] = []
+var next_card_preview_button: Button
 var _svg_texture_cache: Dictionary = {}
 var _card_style_cache: Dictionary = {}
 var _sfx_players: Array[AudioStreamPlayer] = []
@@ -118,9 +124,47 @@ func _ready() -> void:
 	randomize()
 	_setup_audio()
 	_load_card_icons()
+	_setup_deck()
 	_setup_ui()
 	_spawn_towers()
 	queue_redraw()
+
+
+func _setup_deck() -> void:
+	_shuffle_deck()
+	_draw_initial_hand()
+
+
+func _shuffle_deck() -> void:
+	player_deck.shuffle()
+
+
+func _draw_initial_hand() -> void:
+	for i in range(4):
+		if player_deck.is_empty():
+			break
+		var card_id = player_deck.pop_front()
+		if card_id != null:
+			player_hand.append(card_id)
+	_refresh_next_preview()
+
+
+func _draw_one_card() -> void:
+	if player_deck.is_empty():
+		player_deck = ["knight", "archer", "giant", "mini_pekka", "knight", "archer", "giant", "mini_pekka"]
+		player_deck.shuffle()
+	if not player_deck.is_empty():
+		var card_id = player_deck.pop_front()
+		if card_id != null:
+			player_hand.append(card_id)
+	_refresh_next_preview()
+
+
+func _refresh_next_preview() -> void:
+	if player_deck.is_empty():
+		next_card_preview = player_hand[0] if not player_hand.is_empty() else ""
+	else:
+		next_card_preview = player_deck[0]
 
 
 func _process(delta: float) -> void:
@@ -176,11 +220,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	if battle_over:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_try_player_deploy(event.position)
+		if selected_hand_index >= 0:
+			_try_player_deploy(event.position, selected_hand_index)
 
 
 func _load_card_icons() -> void:
-	for card_id in player_deck:
+	var all_cards := ["knight", "archer", "giant", "mini_pekka"]
+	for card_id in all_cards:
 		card_icon_textures[card_id] = load_svg_texture("res://assets/units/%s.svg" % card_id, 1.35)
 
 
@@ -188,17 +234,21 @@ func load_svg_texture(asset_path: String, raster_scale: float = 1.0) -> Texture2
 	var cache_key := "%s@%.2f" % [asset_path, raster_scale]
 	if _svg_texture_cache.has(cache_key):
 		return _svg_texture_cache[cache_key]
-	if not FileAccess.file_exists(asset_path):
-		return null
-	var svg_text := FileAccess.get_file_as_string(asset_path)
-	if svg_text.is_empty():
-		return null
-	var image := Image.new()
-	var err := image.load_svg_from_string(svg_text, raster_scale)
-	if err != OK:
-		return null
-	var texture := ImageTexture.create_from_image(image)
-	_svg_texture_cache[cache_key] = texture
+	var texture: Texture2D = null
+	var try_paths := [
+		asset_path,
+		asset_path.get_base_dir() + "/" + asset_path.get_file().get_basename() + ".svg",
+		asset_path.get_base_dir() + "/" + asset_path.get_file().get_basename() + ".png",
+		"res://assets/units/" + asset_path.get_file().get_basename() + ".svg",
+		"res://assets/units/" + asset_path.get_file().get_basename() + ".png",
+	]
+	for try_path in try_paths:
+		if ResourceLoader.exists(try_path):
+			texture = load(try_path) as Texture2D
+			if texture != null:
+				break
+	if texture != null:
+		_svg_texture_cache[cache_key] = texture
 	return texture
 
 
@@ -234,16 +284,30 @@ func _setup_ui() -> void:
 	selected_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	selected_label.add_theme_font_size_override("font_size", 18)
 	ui_layer.add_child(selected_label)
+	var preview_label := Label.new()
+	preview_label.text = "NEXT"
+	preview_label.position = Vector2(590, 1068)
+	preview_label.size = Vector2(90, 20)
+	preview_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	preview_label.add_theme_font_size_override("font_size", 14)
+	ui_layer.add_child(preview_label)
+	next_card_preview_button = Button.new()
+	next_card_preview_button.position = Vector2(590, 1095)
+	next_card_preview_button.size = Vector2(90, 60)
+	next_card_preview_button.disabled = true
+	next_card_preview_button.add_theme_stylebox_override("disabled", _get_card_stylebox("preview:disabled", Color(0.2, 0.2, 0.24), Color(1.0, 1.0, 1.0, 0.1)))
+	next_card_preview_button.self_modulate = Color(1.0, 1.0, 1.0, 0.7)
+	ui_layer.add_child(next_card_preview_button)
 	var x := 48.0
-	for card_id in player_deck:
+	for i in range(4):
 		var button := Button.new()
 		button.position = Vector2(x, 1130)
 		button.size = Vector2(145, 100)
-		button.icon = card_icon_textures.get(card_id, null)
 		button.add_theme_font_size_override("font_size", 15)
-		button.pressed.connect(_on_card_button_pressed.bind(card_id))
+		button.pressed.connect(_on_hand_slot_pressed.bind(i))
 		ui_layer.add_child(button)
-		card_buttons[card_id] = button
+		hand_slot_buttons.append(button)
+		card_buttons["slot_%d" % i] = button
 		x += 155.0
 	restart_button = Button.new()
 	restart_button.text = "Restart Battle"
@@ -261,20 +325,39 @@ func _update_ui() -> void:
 	enemy_elixir_label.text = "Enemy Elixir: %.1f / %.0f" % [enemy_elixir, max_elixir]
 	selected_label.text = "Selected: %s" % (troop_defs[selected_card_id]["name"] if selected_card_id != "" else "None")
 	restart_button.visible = battle_over
-	for card_id in player_deck:
-		var button: Button = card_buttons[card_id]
-		var cost := int(troop_defs[card_id]["cost"])
-		var disabled := battle_over or player_elixir < float(cost)
-		var selected := card_id == selected_card_id
-		var style_key := "%s:%s:%s" % [card_id, selected, disabled]
-		button.text = "%s\nCost %d" % [troop_defs[card_id]["name"], cost]
-		button.icon = card_icon_textures.get(card_id, null)
-		button.disabled = disabled
-		button.modulate = Color.WHITE
-		var current_style_key := str(button.get_meta("style_key")) if button.has_meta("style_key") else ""
-		if current_style_key != style_key:
+	_update_hand_slots()
+	_update_next_preview()
+
+
+func _update_hand_slots() -> void:
+	for i in range(4):
+		var button: Button = hand_slot_buttons[i]
+		if i < player_hand.size():
+			var card_id: String = player_hand[i]
+			var cost: int = int(troop_defs[card_id]["cost"])
+			var disabled := battle_over or player_elixir < float(cost)
+			var selected := i == selected_hand_index
+			button.icon = card_icon_textures.get(card_id, null)
+			button.text = "%s\nCost %d" % [troop_defs[card_id]["name"], cost]
+			button.disabled = disabled
+			button.modulate = Color.WHITE
 			_apply_card_styles(button, card_id, selected, disabled)
-			button.set_meta("style_key", style_key)
+		else:
+			button.icon = null
+			button.text = ""
+			button.disabled = true
+			button.self_modulate = Color(1.0, 1.0, 1.0, 0.3)
+
+
+func _update_next_preview() -> void:
+	if next_card_preview != "":
+		next_card_preview_button.icon = card_icon_textures.get(next_card_preview, null)
+		next_card_preview_button.text = troop_defs[next_card_preview]["name"]
+		var style := _get_card_stylebox("preview:disabled", Color(0.2, 0.2, 0.24), Color(1.0, 1.0, 1.0, 0.1))
+		next_card_preview_button.add_theme_stylebox_override("disabled", style)
+	else:
+		next_card_preview_button.icon = null
+		next_card_preview_button.text = ""
 
 
 func _apply_card_styles(button: Button, card_id: String, selected: bool, disabled: bool) -> void:
@@ -324,9 +407,14 @@ func _spawn_towers() -> void:
 	_spawn_building({"id": "enemy_king", "name": "Red King Tower", "hp": 3200.0, "range": 250.0, "damage": 78.0, "cooldown": 1.0, "radius": 42.0, "color": Color(0.84, 0.22, 0.2), "is_king": true, "lane": LANE_CENTER}, ENEMY_TEAM, Vector2(360, 130))
 
 
-func _try_player_deploy(world_pos: Vector2) -> void:
-	if selected_card_id == "":
-		status_text = "Pick a card before dropping troops."
+func _try_player_deploy(world_pos: Vector2, hand_index: int) -> void:
+	if hand_index < 0 or hand_index >= player_hand.size():
+		status_text = "Invalid card slot."
+		return
+	var card_id: String = player_hand[hand_index]
+	var cost := float(troop_defs[card_id]["cost"])
+	if player_elixir < cost:
+		status_text = "Not enough elixir."
 		return
 	if not ARENA_RECT.has_point(world_pos):
 		status_text = "Click inside the arena."
@@ -334,17 +422,16 @@ func _try_player_deploy(world_pos: Vector2) -> void:
 	if world_pos.y < PLAYER_DEPLOY_Y:
 		status_text = "You can only deploy on your half of the arena."
 		return
-	var cost := float(troop_defs[selected_card_id]["cost"])
-	if player_elixir < cost:
-		status_text = "Not enough elixir."
-		return
 	var lane := _lane_for_x(world_pos.x)
 	player_elixir -= cost
 	var spawn_x: float = LANE_X[lane] + randf_range(-24.0, 24.0)
 	var spawn_y: float = clamp(world_pos.y, PLAYER_DEPLOY_Y + 20.0, ARENA_RECT.end.y - 24.0)
-	_spawn_troop(selected_card_id, PLAYER_TEAM, lane, Vector2(spawn_x, spawn_y))
-	status_text = "%s deployed on %s lane." % [troop_defs[selected_card_id]["name"], lane]
+	_spawn_troop(card_id, PLAYER_TEAM, lane, Vector2(spawn_x, spawn_y))
+	status_text = "%s deployed on %s lane." % [troop_defs[card_id]["name"], lane]
+	player_hand.remove_at(hand_index)
+	_draw_one_card()
 	selected_card_id = ""
+	selected_hand_index = -1
 
 
 func _enemy_play() -> void:
@@ -658,31 +745,25 @@ func _check_victory() -> void:
 		winner_text = "Defeat! Your King Tower fell."
 
 
-func _on_card_button_pressed(card_id: String) -> void:
+func _on_hand_slot_pressed(slot_index: int) -> void:
 	if battle_over:
 		return
-	selected_card_id = "" if selected_card_id == card_id else card_id
-	if selected_card_id == "":
+	if slot_index < 0 or slot_index >= player_hand.size():
+		return
+	var card_id: String = player_hand[slot_index]
+	var cost: float = troop_defs[card_id]["cost"]
+	if player_elixir < cost:
+		status_text = "Not enough elixir."
+		return
+	if selected_hand_index == slot_index:
+		selected_card_id = ""
+		selected_hand_index = -1
 		status_text = "Selection cleared."
 	else:
+		selected_card_id = card_id
+		selected_hand_index = slot_index
 		status_text = "Selected %s. Click left or right lane to deploy." % troop_defs[card_id]["name"]
-	_update_ui()
 
 
 func _on_restart_pressed() -> void:
 	get_tree().reload_current_scene()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
