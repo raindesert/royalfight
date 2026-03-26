@@ -1,0 +1,10 @@
+﻿.godot/
+output/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# OS / editor noise
+Thumbs.db
+.DS_Store

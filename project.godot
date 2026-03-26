@@ -8,11 +8,14 @@
 
 config_version=5
 
+"ï»¿config_version"=5
+
 [application]
 
 config/name="RoyalFight"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.6")
+config/icon="res://assets/icon.png"
 
 [display]
 

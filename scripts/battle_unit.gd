@@ -40,6 +40,7 @@ var _projectile_target := Vector2.ZERO
 var _projectile_progress: float = 0.0
 var _projectile_duration: float = 0.0
 var _has_projectile: bool = false
+var _projectile_target_node: Node = null
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -76,6 +77,8 @@ func _process(delta: float) -> void:
 		_pending_target = null
 		_windup_timer = 0.0
 		_visual_dirty = true
+	if _projectile_target_node != null and not is_instance_valid(_projectile_target_node):
+		_projectile_target_node = null
 
 	_attack_timer = max(_attack_timer - delta, 0.0)
 	_retarget_timer = max(_retarget_timer - delta, 0.0)
@@ -85,18 +88,20 @@ func _process(delta: float) -> void:
 	_hitstun_timer = max(_hitstun_timer - delta, 0.0)
 	_knockback_velocity = _knockback_velocity.move_toward(Vector2.ZERO, 520.0 * delta)
 	position += _knockback_velocity * delta
+	position = controller.constrain_unit_position(self, position)
 
 	if _has_projectile:
 		_projectile_progress += delta
 		_visual_dirty = true
-		if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
-			_projectile_target = _pending_target.global_position - global_position
+		if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+			_projectile_target = _projectile_target_node.global_position
 		if _projectile_progress >= _projectile_duration:
-			if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
-				_pending_target.take_damage(damage, self)
-				controller.on_damage_dealt(_pending_target, self)
+			if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+				_projectile_target_node.take_damage(damage, self)
+				controller.on_damage_dealt(_projectile_target_node, self)
 			_has_projectile = false
 			_projectile_progress = 0.0
+			_projectile_target_node = null
 
 	if _focus_timer <= 0.0:
 		_focus_target = null
@@ -138,6 +143,7 @@ func _process(delta: float) -> void:
 		_follow_lane_path(delta)
 
 	_apply_separation(delta)
+	position = controller.constrain_unit_position(self, position)
 	_request_redraw()
 
 
@@ -167,12 +173,14 @@ func _resolve_attack() -> void:
 		_attack_timer = attack_cooldown
 		_pending_target = null
 		_windup_timer = 0.0
+		_projectile_target_node = null
 		return
 	if attack_range > 40.0:
-		_projectile_pos = Vector2.ZERO
-		_projectile_target = resolved_target.global_position - global_position
+		_projectile_pos = global_position
+		_projectile_target = resolved_target.global_position
+		_projectile_target_node = resolved_target
 		_projectile_progress = 0.0
-		var distance: float = _projectile_target.length()
+		var distance: float = _projectile_pos.distance_to(_projectile_target)
 		_projectile_duration = max(0.12, distance / 480.0)
 		_has_projectile = true
 		_visual_dirty = true
@@ -218,7 +226,8 @@ func _follow_lane_path(delta: float) -> void:
 
 
 func _move_toward_position(target_position: Vector2, delta: float) -> void:
-	var offset: Vector2 = target_position - global_position
+	var nav_target: Vector2 = controller.get_navigation_target_for_unit(self, target_position)
+	var offset: Vector2 = nav_target - global_position
 	var distance: float = offset.length()
 	if distance <= 0.001:
 		return
@@ -261,6 +270,8 @@ func clear_target_reference(target: Node) -> void:
 	if _pending_target == target:
 		_pending_target = null
 		_windup_timer = 0.0
+	if _projectile_target_node == target:
+		_projectile_target_node = null
 
 
 func take_damage(amount: float, attacker: Node = null) -> void:
@@ -275,7 +286,8 @@ func take_damage(amount: float, attacker: Node = null) -> void:
 			kb_dir = Vector2(0.0, -1.0 if attacker.team == controller.PLAYER_TEAM else 1.0)
 		_knockback_velocity += kb_dir * 55.0
 	_hitstun_timer = 0.11
-	_recovery_timer = max(_recovery_timer, 0.06)
+	_recovery_duration = max(_recovery_duration, 0.09)
+	_recovery_timer = max(_recovery_timer, _recovery_duration * 0.65)
 	_windup_timer = 0.0
 	_pending_target = null
 	if hp <= 0.0:
@@ -293,18 +305,18 @@ func _draw() -> void:
 	var draw_rotation := 0.0
 	var draw_scale := Vector2.ONE
 	if _pending_target != null and _windup_duration > 0.0:
-		var windup_t := 1.0 - (_windup_timer / _windup_duration)
+		var windup_t: float = clampf(1.0 - (_windup_timer / maxf(_windup_duration, 0.001)), 0.0, 1.0)
 		var eased := windup_t * windup_t * (3.0 - 2.0 * windup_t)
 		draw_offset -= _attack_pose_dir * (5.0 * eased)
 		draw_scale = Vector2(1.0 - 0.08 * eased, 1.0 + 0.14 * eased)
 		draw_rotation = _attack_pose_dir.x * -0.08 * eased
 	elif _recovery_timer > 0.0 and _recovery_duration > 0.0:
-		var recovery_t := _recovery_timer / _recovery_duration
+		var recovery_t: float = clampf(_recovery_timer / maxf(_recovery_duration, 0.001), 0.0, 1.0)
 		draw_offset += _attack_pose_dir * (4.0 * recovery_t)
 		draw_scale = Vector2(1.0 + 0.10 * recovery_t, 1.0 - 0.12 * recovery_t)
 		draw_rotation = _attack_pose_dir.x * 0.06 * recovery_t
 	if _hitstun_timer > 0.0:
-		var stun_t := _hitstun_timer / 0.11
+		var stun_t: float = clampf(_hitstun_timer / 0.11, 0.0, 1.0)
 		draw_scale += Vector2(0.08 * stun_t, -0.10 * stun_t)
 		draw_offset += _knockback_velocity.normalized() * (2.0 * stun_t)
 	draw_set_transform(draw_offset, draw_rotation, draw_scale)
@@ -342,11 +354,12 @@ func _draw() -> void:
 	var hp_ratio := 0.0 if max_hp <= 0.0 else hp / max_hp
 	draw_rect(Rect2(bar_rect.position, Vector2(bar_width * hp_ratio, 6.0)), Color(0.36, 0.9, 0.42))
 
-	if _has_projectile:
-		var t: float = _projectile_progress / _projectile_duration
+	if _has_projectile and _projectile_duration > 0.0:
+		var t: float = clampf(_projectile_progress / _projectile_duration, 0.0, 1.0)
 		var arc_height: float = 35.0
-		var current_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
-		current_pos += Vector2(0.0, -arc_height * sin(t * PI))
+		var current_world_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
+		current_world_pos += Vector2(0.0, -arc_height * sin(t * PI))
+		var current_pos: Vector2 = to_local(current_world_pos)
 		var proj_dir: Vector2 = (_projectile_target - _projectile_pos).normalized()
 		if proj_dir.length() > 0.001:
 			var angle: float = proj_dir.angle()

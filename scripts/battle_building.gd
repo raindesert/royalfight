@@ -32,6 +32,7 @@ var _projectile_target := Vector2.ZERO
 var _projectile_progress: float = 0.0
 var _projectile_duration: float = 0.0
 var _has_projectile: bool = false
+var _projectile_target_node: Node = null
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -62,17 +63,20 @@ func _process(delta: float) -> void:
 		_pending_target = null
 		_windup_timer = 0.0
 		_visual_dirty = true
+	if _projectile_target_node != null and not is_instance_valid(_projectile_target_node):
+		_projectile_target_node = null
 	if _has_projectile:
 		_projectile_progress += delta
 		_visual_dirty = true
-		if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
-			_projectile_target = _pending_target.global_position - global_position
+		if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+			_projectile_target = _projectile_target_node.global_position
 		if _projectile_progress >= _projectile_duration:
-			if _pending_target != null and is_instance_valid(_pending_target) and not _pending_target.is_dead:
-				_pending_target.take_damage(damage, self)
-				controller.on_damage_dealt(_pending_target, self)
+			if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+				_projectile_target_node.take_damage(damage, self)
+				controller.on_damage_dealt(_projectile_target_node, self)
 			_has_projectile = false
 			_projectile_progress = 0.0
+			_projectile_target_node = null
 	if is_king and not controller.is_king_tower_awake(team):
 		_request_redraw()
 		return
@@ -128,11 +132,13 @@ func _resolve_attack() -> void:
 		_attack_timer = attack_cooldown
 		_pending_target = null
 		_windup_timer = 0.0
+		_projectile_target_node = null
 		return
-	_projectile_pos = Vector2.ZERO
-	_projectile_target = resolved_target.global_position - global_position
+	_projectile_pos = global_position
+	_projectile_target = resolved_target.global_position
+	_projectile_target_node = resolved_target
 	_projectile_progress = 0.0
-	var distance: float = _projectile_target.length()
+	var distance: float = _projectile_pos.distance_to(_projectile_target)
 	_projectile_duration = max(0.15, distance / 420.0)
 	_has_projectile = true
 	_attack_timer = attack_cooldown
@@ -146,6 +152,8 @@ func clear_target_reference(target: Node) -> void:
 	if _pending_target == target:
 		_pending_target = null
 		_windup_timer = 0.0
+	if _projectile_target_node == target:
+		_projectile_target_node = null
 
 
 func take_damage(amount: float, _attacker: Node = null) -> void:
@@ -218,11 +226,12 @@ func _draw() -> void:
 	var hp_ratio := 0.0 if max_hp <= 0.0 else hp / max_hp
 	draw_rect(Rect2(bar_rect.position, Vector2(bar_width * hp_ratio, 7.0)), Color(0.36, 0.9, 0.42))
 
-	if _has_projectile:
-		var t: float = _projectile_progress / _projectile_duration
+	if _has_projectile and _projectile_duration > 0.0:
+		var t: float = clampf(_projectile_progress / _projectile_duration, 0.0, 1.0)
 		var arc_height: float = 45.0
-		var current_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
-		current_pos += Vector2(0.0, -arc_height * sin(t * PI))
+		var current_world_pos: Vector2 = _projectile_pos.lerp(_projectile_target, t)
+		current_world_pos += Vector2(0.0, -arc_height * sin(t * PI))
+		var current_pos: Vector2 = to_local(current_world_pos)
 		var proj_dir: Vector2 = (_projectile_target - _projectile_pos).normalized()
 		if proj_dir.length() > 0.001:
 			var angle: float = proj_dir.angle()

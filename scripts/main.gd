@@ -2,12 +2,27 @@ extends Node2D
 
 const BattleUnit = preload("res://scripts/battle_unit.gd")
 const BattleBuilding = preload("res://scripts/battle_building.gd")
+const PLAYER_DECK_TEMPLATE := ["knight", "archer", "giant", "mini_pekka", "knight", "archer", "giant", "mini_pekka"]
+const TEXTURE_ASSET_MAP := {
+	"res://assets/units/knight.svg": preload("res://assets/units/knight.svg"),
+	"res://assets/units/archer.svg": preload("res://assets/units/archer.svg"),
+	"res://assets/units/giant.svg": preload("res://assets/units/giant.svg"),
+	"res://assets/units/mini_pekka.svg": preload("res://assets/units/mini_pekka.svg"),
+	"res://assets/buildings/crown_tower.svg": preload("res://assets/buildings/crown_tower.svg"),
+	"res://assets/buildings/king_tower.svg": preload("res://assets/buildings/king_tower.svg"),
+	"res://assets/icon.png": preload("res://assets/icon.png")
+}
 
 const PLAYER_TEAM := 0
 const ENEMY_TEAM := 1
 const SCREEN_SIZE := Vector2(720, 1280)
 const ARENA_RECT := Rect2(40, 110, 640, 980)
 const RIVER_Y := 600.0
+const RIVER_HALF_HEIGHT := 36.0
+const BRIDGE_WIDTH := 96.0
+const BRIDGE_HEIGHT := 100.0
+const BRIDGE_NAV_TOLERANCE := 8.0
+const LANE_DEPLOY_HALF_WIDTH := 64.0
 const PLAYER_DEPLOY_Y := 700.0
 const ENEMY_DEPLOY_Y := 500.0
 const LANE_LEFT := "left"
@@ -31,6 +46,7 @@ var troop_defs := {
 	"knight": {
 		"id": "knight",
 		"name": "Knight",
+		"ui_name": "Knight",
 		"cost": 3,
 		"hp": 620.0,
 		"speed": 92.0,
@@ -43,6 +59,7 @@ var troop_defs := {
 	"archer": {
 		"id": "archer",
 		"name": "Archer",
+		"ui_name": "Archer",
 		"cost": 3,
 		"hp": 260.0,
 		"speed": 82.0,
@@ -55,6 +72,7 @@ var troop_defs := {
 	"giant": {
 		"id": "giant",
 		"name": "Giant",
+		"ui_name": "Giant",
 		"cost": 5,
 		"hp": 1650.0,
 		"speed": 58.0,
@@ -68,6 +86,7 @@ var troop_defs := {
 	"mini_pekka": {
 		"id": "mini_pekka",
 		"name": "Mini P.E.K.K.A",
+		"ui_name": "Mini PEKKA",
 		"cost": 4,
 		"hp": 720.0,
 		"speed": 98.0,
@@ -79,7 +98,7 @@ var troop_defs := {
 	}
 }
 
-var player_deck = ["knight", "archer", "giant", "mini_pekka", "knight", "archer", "giant", "mini_pekka"]
+var player_deck = PLAYER_DECK_TEMPLATE.duplicate()
 var player_hand = []
 var next_card_preview = ""
 
@@ -112,6 +131,9 @@ var hand_slot_buttons: Array[Button] = []
 var next_card_preview_button: Button
 var _svg_texture_cache: Dictionary = {}
 var _card_style_cache: Dictionary = {}
+var _battle_entities: Array[Node] = []
+var _battle_units: Array[Node] = []
+var _battle_buildings: Array[Node] = []
 var _sfx_players: Array[AudioStreamPlayer] = []
 var _sfx_cursor := 0
 var _attack_sfx_light: AudioStreamWAV
@@ -151,7 +173,7 @@ func _draw_initial_hand() -> void:
 
 func _draw_one_card() -> void:
 	if player_deck.is_empty():
-		player_deck = ["knight", "archer", "giant", "mini_pekka", "knight", "archer", "giant", "mini_pekka"]
+		player_deck = PLAYER_DECK_TEMPLATE.duplicate()
 		player_deck.shuffle()
 	if not player_deck.is_empty():
 		var card_id = player_deck.pop_front()
@@ -185,7 +207,7 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, SCREEN_SIZE), Color(0.09, 0.27, 0.18))
 	draw_rect(ARENA_RECT, Color(0.72, 0.78, 0.56))
-	draw_rect(Rect2(ARENA_RECT.position.x, RIVER_Y - 36.0, ARENA_RECT.size.x, 72.0), Color(0.2, 0.58, 0.9))
+	draw_rect(Rect2(ARENA_RECT.position.x, RIVER_Y - RIVER_HALF_HEIGHT, ARENA_RECT.size.x, RIVER_HALF_HEIGHT * 2.0), Color(0.2, 0.58, 0.9))
 	draw_line(Vector2(ARENA_RECT.position.x, RIVER_Y), Vector2(ARENA_RECT.end.x, RIVER_Y), Color(0.76, 0.9, 1.0), 4.0)
 	draw_line(Vector2(ARENA_RECT.position.x, PLAYER_DEPLOY_Y), Vector2(ARENA_RECT.end.x, PLAYER_DEPLOY_Y), Color(1.0, 1.0, 1.0, 0.35), 2.0)
 	draw_line(Vector2(360, ARENA_RECT.position.y), Vector2(360, ARENA_RECT.end.y), Color(1.0, 1.0, 1.0, 0.12), 2.0)
@@ -204,11 +226,8 @@ func _draw_lane_guides() -> void:
 
 
 func _draw_bridges() -> void:
-	var bridge_width := 96.0
-	var bridge_height := 100.0
 	for lane in [LANE_LEFT, LANE_RIGHT]:
-		var bridge_x: float = LANE_X[lane] - bridge_width * 0.5
-		var bridge_rect := Rect2(bridge_x, RIVER_Y - bridge_height * 0.5, bridge_width, bridge_height)
+		var bridge_rect := get_bridge_rect(lane)
 		draw_rect(bridge_rect, Color(0.61, 0.48, 0.32))
 		draw_rect(bridge_rect, Color(0.32, 0.22, 0.1, 0.85), false, 3.0)
 		for plank in range(5):
@@ -220,6 +239,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if battle_over:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if selected_hand_index >= 0:
+			_try_player_deploy(event.position, selected_hand_index)
+	elif event is InputEventScreenTouch and event.pressed:
 		if selected_hand_index >= 0:
 			_try_player_deploy(event.position, selected_hand_index)
 
@@ -234,19 +256,16 @@ func load_svg_texture(asset_path: String, raster_scale: float = 1.0) -> Texture2
 	var cache_key := "%s@%.2f" % [asset_path, raster_scale]
 	if _svg_texture_cache.has(cache_key):
 		return _svg_texture_cache[cache_key]
-	var texture: Texture2D = null
-	var try_paths := [
-		asset_path,
-		asset_path.get_base_dir() + "/" + asset_path.get_file().get_basename() + ".svg",
-		asset_path.get_base_dir() + "/" + asset_path.get_file().get_basename() + ".png",
-		"res://assets/units/" + asset_path.get_file().get_basename() + ".svg",
-		"res://assets/units/" + asset_path.get_file().get_basename() + ".png",
-	]
-	for try_path in try_paths:
-		if ResourceLoader.exists(try_path):
-			texture = load(try_path) as Texture2D
-			if texture != null:
+	var texture_path := asset_path
+	if not TEXTURE_ASSET_MAP.has(texture_path):
+		var basename := asset_path.get_file().get_basename()
+		for known_path in TEXTURE_ASSET_MAP.keys():
+			if known_path.get_file().get_basename() == basename:
+				texture_path = known_path
 				break
+	var texture: Texture2D = TEXTURE_ASSET_MAP.get(texture_path, null)
+	if texture == null and ResourceLoader.exists(asset_path):
+		texture = ResourceLoader.load(asset_path, "Texture2D", ResourceLoader.CACHE_MODE_REUSE) as Texture2D
 	if texture != null:
 		_svg_texture_cache[cache_key] = texture
 	return texture
@@ -295,6 +314,7 @@ func _setup_ui() -> void:
 	next_card_preview_button.position = Vector2(590, 1095)
 	next_card_preview_button.size = Vector2(90, 60)
 	next_card_preview_button.disabled = true
+	next_card_preview_button.add_theme_font_size_override("font_size", 11)
 	next_card_preview_button.add_theme_stylebox_override("disabled", _get_card_stylebox("preview:disabled", Color(0.2, 0.2, 0.24), Color(1.0, 1.0, 1.0, 0.1)))
 	next_card_preview_button.self_modulate = Color(1.0, 1.0, 1.0, 0.7)
 	ui_layer.add_child(next_card_preview_button)
@@ -303,7 +323,7 @@ func _setup_ui() -> void:
 		var button := Button.new()
 		button.position = Vector2(x, 1130)
 		button.size = Vector2(145, 100)
-		button.add_theme_font_size_override("font_size", 15)
+		button.add_theme_font_size_override("font_size", 14)
 		button.pressed.connect(_on_hand_slot_pressed.bind(i))
 		ui_layer.add_child(button)
 		hand_slot_buttons.append(button)
@@ -337,22 +357,28 @@ func _update_hand_slots() -> void:
 			var cost: int = int(troop_defs[card_id]["cost"])
 			var disabled := battle_over or player_elixir < float(cost)
 			var selected := i == selected_hand_index
+			var style_key := "%s:%s:%s" % [card_id, selected, disabled]
 			button.icon = card_icon_textures.get(card_id, null)
-			button.text = "%s\nCost %d" % [troop_defs[card_id]["name"], cost]
+			button.text = "%s\nCost %d" % [str(troop_defs[card_id].get("ui_name", troop_defs[card_id]["name"])), cost]
 			button.disabled = disabled
 			button.modulate = Color.WHITE
-			_apply_card_styles(button, card_id, selected, disabled)
+			var current_style_key := str(button.get_meta("style_key")) if button.has_meta("style_key") else ""
+			if current_style_key != style_key:
+				_apply_card_styles(button, card_id, selected, disabled)
+				button.set_meta("style_key", style_key)
 		else:
 			button.icon = null
 			button.text = ""
 			button.disabled = true
 			button.self_modulate = Color(1.0, 1.0, 1.0, 0.3)
+			if button.has_meta("style_key"):
+				button.remove_meta("style_key")
 
 
 func _update_next_preview() -> void:
 	if next_card_preview != "":
 		next_card_preview_button.icon = card_icon_textures.get(next_card_preview, null)
-		next_card_preview_button.text = troop_defs[next_card_preview]["name"]
+		next_card_preview_button.text = str(troop_defs[next_card_preview].get("ui_name", troop_defs[next_card_preview]["name"]))
 		var style := _get_card_stylebox("preview:disabled", Color(0.2, 0.2, 0.24), Color(1.0, 1.0, 1.0, 0.1))
 		next_card_preview_button.add_theme_stylebox_override("disabled", style)
 	else:
@@ -398,6 +424,22 @@ func _make_card_stylebox(fill_color: Color, border_color: Color) -> StyleBoxFlat
 	return style
 
 
+func _register_entity(entity: Node) -> void:
+	_battle_entities.append(entity)
+	if entity.entity_kind == "unit":
+		_battle_units.append(entity)
+	else:
+		_battle_buildings.append(entity)
+
+
+func _unregister_entity(entity: Node) -> void:
+	_battle_entities.erase(entity)
+	if entity.entity_kind == "unit":
+		_battle_units.erase(entity)
+	else:
+		_battle_buildings.erase(entity)
+
+
 func _spawn_towers() -> void:
 	_spawn_building({"id": "player_left_tower", "name": "Blue Left Tower", "hp": 1800.0, "range": 230.0, "damage": 58.0, "cooldown": 0.9, "radius": 34.0, "color": Color(0.3, 0.63, 1.0), "lane": LANE_LEFT}, PLAYER_TEAM, Vector2(180, 930))
 	_spawn_building({"id": "player_right_tower", "name": "Blue Right Tower", "hp": 1800.0, "range": 230.0, "damage": 58.0, "cooldown": 0.9, "radius": 34.0, "color": Color(0.3, 0.63, 1.0), "lane": LANE_RIGHT}, PLAYER_TEAM, Vector2(540, 930))
@@ -423,10 +465,9 @@ func _try_player_deploy(world_pos: Vector2, hand_index: int) -> void:
 		status_text = "You can only deploy on your half of the arena."
 		return
 	var lane := _lane_for_x(world_pos.x)
+	var spawn_pos := _get_player_deploy_position(world_pos, lane)
 	player_elixir -= cost
-	var spawn_x: float = LANE_X[lane] + randf_range(-24.0, 24.0)
-	var spawn_y: float = clamp(world_pos.y, PLAYER_DEPLOY_Y + 20.0, ARENA_RECT.end.y - 24.0)
-	_spawn_troop(card_id, PLAYER_TEAM, lane, Vector2(spawn_x, spawn_y))
+	_spawn_troop(card_id, PLAYER_TEAM, lane, spawn_pos)
 	status_text = "%s deployed on %s lane." % [troop_defs[card_id]["name"], lane]
 	player_hand.remove_at(hand_index)
 	_draw_one_card()
@@ -445,7 +486,7 @@ func _enemy_play() -> void:
 	var card_id := affordable[randi() % affordable.size()]
 	var lane := LANE_LEFT if randi() % 2 == 0 else LANE_RIGHT
 	enemy_elixir -= float(troop_defs[card_id]["cost"])
-	_spawn_troop(card_id, ENEMY_TEAM, lane, Vector2(LANE_X[lane] + randf_range(-24.0, 24.0), randf_range(ARENA_RECT.position.y + 24.0, ENEMY_DEPLOY_Y - 20.0)))
+	_spawn_troop(card_id, ENEMY_TEAM, lane, _get_enemy_deploy_position(lane))
 	status_text = "Enemy deployed %s on %s lane." % [troop_defs[card_id]["name"], lane]
 	ai_play_timer = randf_range(1.8, 3.7)
 
@@ -455,17 +496,84 @@ func _spawn_troop(card_id: String, team: int, lane: String, spawn_pos: Vector2) 
 	var unit_config: Dictionary = troop_defs[card_id].duplicate(true)
 	unit_config["lane"] = lane
 	troop.setup(unit_config, team, self, spawn_pos)
+	_register_entity(troop)
 	add_child(troop)
 
 
 func _spawn_building(config: Dictionary, team: int, spawn_pos: Vector2) -> void:
 	var building := BattleBuilding.new()
 	building.setup(config, team, self, spawn_pos)
+	_register_entity(building)
 	add_child(building)
 
 
 func _lane_for_x(x: float) -> String:
-	return LANE_LEFT if x < LANE_X[LANE_CENTER] else LANE_RIGHT
+	var left_distance: float = absf(x - float(LANE_X[LANE_LEFT]))
+	var right_distance: float = absf(x - float(LANE_X[LANE_RIGHT]))
+	return LANE_LEFT if left_distance <= right_distance else LANE_RIGHT
+
+
+func get_bridge_rect(lane: String) -> Rect2:
+	return Rect2(Vector2(LANE_X[lane] - BRIDGE_WIDTH * 0.5, RIVER_Y - BRIDGE_HEIGHT * 0.5), Vector2(BRIDGE_WIDTH, BRIDGE_HEIGHT))
+
+
+func _get_lane_spawn_x(raw_x: float, lane: String) -> float:
+	var lane_center_x: float = LANE_X[lane]
+	return lane_center_x + clampf(raw_x - lane_center_x, -LANE_DEPLOY_HALF_WIDTH, LANE_DEPLOY_HALF_WIDTH)
+
+
+func _get_player_deploy_position(world_pos: Vector2, lane: String) -> Vector2:
+	var spawn_x: float = _get_lane_spawn_x(world_pos.x, lane)
+	var spawn_y: float = clampf(world_pos.y, PLAYER_DEPLOY_Y + 22.0, ARENA_RECT.end.y - 24.0)
+	return Vector2(spawn_x, spawn_y)
+
+
+func _get_enemy_deploy_position(lane: String) -> Vector2:
+	var spawn_x: float = _get_lane_spawn_x(float(LANE_X[lane]) + randf_range(-42.0, 42.0), lane)
+	var spawn_y: float = randf_range(ARENA_RECT.position.y + 24.0, ENEMY_DEPLOY_Y - 20.0)
+	return Vector2(spawn_x, spawn_y)
+
+
+func get_navigation_target_for_unit(unit: Node, desired_target: Vector2) -> Vector2:
+	if unit == null or unit.lane == LANE_CENTER:
+		return desired_target
+	var lane_x: float = float(LANE_X[unit.lane])
+	if unit.team == PLAYER_TEAM and desired_target.y < RIVER_Y - RIVER_HALF_HEIGHT:
+		if unit.global_position.y > BRIDGE_Y[PLAYER_TEAM] + BRIDGE_NAV_TOLERANCE:
+			return Vector2(lane_x, BRIDGE_Y[PLAYER_TEAM])
+		if unit.global_position.y > BRIDGE_Y[ENEMY_TEAM] + BRIDGE_NAV_TOLERANCE:
+			return Vector2(lane_x, BRIDGE_Y[ENEMY_TEAM])
+	elif unit.team == ENEMY_TEAM and desired_target.y > RIVER_Y + RIVER_HALF_HEIGHT:
+		if unit.global_position.y < BRIDGE_Y[ENEMY_TEAM] - BRIDGE_NAV_TOLERANCE:
+			return Vector2(lane_x, BRIDGE_Y[ENEMY_TEAM])
+		if unit.global_position.y < BRIDGE_Y[PLAYER_TEAM] - BRIDGE_NAV_TOLERANCE:
+			return Vector2(lane_x, BRIDGE_Y[PLAYER_TEAM])
+	return desired_target
+
+
+func _is_river_blocked_for_unit(unit: Node, candidate_position: Vector2) -> bool:
+	if unit == null or unit.lane == LANE_CENTER:
+		return false
+	var river_top: float = RIVER_Y - RIVER_HALF_HEIGHT
+	var river_bottom: float = RIVER_Y + RIVER_HALF_HEIGHT
+	if candidate_position.y + unit.radius <= river_top or candidate_position.y - unit.radius >= river_bottom:
+		return false
+	var bridge_half_width: float = BRIDGE_WIDTH * 0.5 - maxf(6.0, unit.radius * 0.25)
+	return abs(candidate_position.x - LANE_X[unit.lane]) > bridge_half_width
+
+
+func constrain_unit_position(unit: Node, candidate_position: Vector2) -> Vector2:
+	if unit == null:
+		return candidate_position
+	var constrained: Vector2 = candidate_position
+	constrained.x = clampf(constrained.x, ARENA_RECT.position.x + unit.radius, ARENA_RECT.end.x - unit.radius)
+	constrained.y = clampf(constrained.y, ARENA_RECT.position.y + unit.radius, ARENA_RECT.end.y - unit.radius)
+	if _is_river_blocked_for_unit(unit, constrained):
+		var bridge_half_width: float = BRIDGE_WIDTH * 0.5 - maxf(6.0, unit.radius * 0.25)
+		constrained.x = clampf(constrained.x, LANE_X[unit.lane] - bridge_half_width, LANE_X[unit.lane] + bridge_half_width)
+		if _is_river_blocked_for_unit(unit, constrained):
+			constrained.y = RIVER_Y - RIVER_HALF_HEIGHT - unit.radius if constrained.y < RIVER_Y else RIVER_Y + RIVER_HALF_HEIGHT + unit.radius
+	return constrained
 
 
 func get_lane_path_for_unit(unit: Node) -> Array[Vector2]:
@@ -504,7 +612,7 @@ func update_unit_target(unit: Node, current_target, force_retarget: bool) -> Nod
 	var best_target: Node = null
 	var best_score: float = INF
 	var sight_radius: float = unit.get_sight_radius()
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	for entity in _battle_entities:
 		if entity == unit:
 			continue
 		if entity.is_dead or entity.team == unit.team:
@@ -546,12 +654,8 @@ func _is_target_valid(unit: Node, target) -> bool:
 func choose_target_for_building(building: Node) -> Node:
 	var best_target: Node = null
 	var best_score: float = INF
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
-		if entity == building:
-			continue
+	for entity in _battle_units:
 		if entity.is_dead or entity.team == building.team:
-			continue
-		if entity.entity_kind == "building":
 			continue
 		var distance: float = building.global_position.distance_to(entity.global_position)
 		var score: float = distance
@@ -564,14 +668,14 @@ func choose_target_for_building(building: Node) -> Node:
 
 
 func get_lane_tower(team: int, lane: String) -> Node:
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	for entity in _battle_buildings:
 		if entity.entity_kind == "building" and not entity.is_dead and entity.team == team and entity.lane == lane and not entity.is_king:
 			return entity
 	return null
 
 
 func get_king_tower(team: int) -> Node:
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	for entity in _battle_buildings:
 		if entity.entity_kind == "building" and not entity.is_dead and entity.team == team and entity.is_king:
 			return entity
 	return null
@@ -664,7 +768,7 @@ func _create_sfx(freq_start: float, freq_end: float, duration: float, amplitude:
 func get_friendly_blocker(unit: Node, desired_dir: Vector2) -> Node:
 	var best_blocker: Node = null
 	var best_forward: float = INF
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	for entity in _battle_units:
 		if entity == unit:
 			continue
 		if entity.is_dead or entity.entity_kind != "unit" or entity.team != unit.team or entity.lane != unit.lane:
@@ -684,7 +788,7 @@ func get_friendly_blocker(unit: Node, desired_dir: Vector2) -> Node:
 
 func get_unit_separation(unit: Node) -> Vector2:
 	var push := Vector2.ZERO
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	for entity in _battle_units:
 		if entity == unit:
 			continue
 		if entity.is_dead or entity.entity_kind != "unit" or entity.lane != unit.lane:
@@ -698,9 +802,12 @@ func get_unit_separation(unit: Node) -> Vector2:
 
 
 func can_move_to_position(unit: Node, candidate_position: Vector2) -> bool:
-	if not ARENA_RECT.has_point(candidate_position):
+	if unit == null:
 		return false
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	var constrained := constrain_unit_position(unit, candidate_position)
+	if constrained.distance_to(candidate_position) > 0.05:
+		return false
+	for entity in _battle_units:
 		if entity == unit:
 			continue
 		if entity.is_dead or entity.entity_kind != "unit" or entity.team != unit.team or entity.lane != unit.lane:
@@ -712,7 +819,8 @@ func can_move_to_position(unit: Node, candidate_position: Vector2) -> bool:
 
 
 func on_entity_destroyed(entity: Node) -> void:
-	for other in get_tree().get_nodes_in_group("battle_entity"):
+	_unregister_entity(entity)
+	for other in _battle_entities.duplicate():
 		if other == entity or other.is_dead:
 			continue
 		if other.has_method("clear_target_reference"):
@@ -731,7 +839,7 @@ func _check_victory() -> void:
 		return
 	var player_king_alive := false
 	var enemy_king_alive := false
-	for entity in get_tree().get_nodes_in_group("battle_entity"):
+	for entity in _battle_buildings:
 		if entity.entity_kind == "building" and entity.is_king and not entity.is_dead:
 			if entity.team == PLAYER_TEAM:
 				player_king_alive = true
