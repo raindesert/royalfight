@@ -124,10 +124,11 @@ func _process(delta: float) -> void:
 			_projectile_target = _projectile_target_node.global_position
 		if _projectile_progress >= _projectile_duration:
 			if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+				var target_pos: Vector2 = _projectile_target_node.global_position
 				_projectile_target_node.take_damage(damage, self)
 				controller.on_damage_dealt(_projectile_target_node, self)
 				if splash_damage > 0.0 and splash_radius > 0.0:
-					_apply_splash_damage(_projectile_target_node.global_position)
+					_apply_splash_damage(target_pos)
 			_has_projectile = false
 			_projectile_progress = 0.0
 			_projectile_target_node = null
