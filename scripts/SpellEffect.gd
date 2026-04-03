@@ -173,17 +173,22 @@ func _draw_lightning(t: float, team_color: Color) -> void:
 	var alpha: float = (1.0 - t) * 0.9
 	var lightning_color := Color(1.0, 0.95, 0.5, alpha)
 	var origin: Vector2 = cast_position
+	var next_origin: Vector2 = origin
 	for i in range(_lightning_index):
 		if i >= _lightning_chain.size():
 			break
 		var target: Node = _lightning_chain[i]
-		if not is_instance_valid(target) or target.is_dead:
+		next_origin = origin
+		if not is_instance_valid(target):
+			continue
+		if target.get("is_dead") != null and target.is_dead:
 			continue
 		var target_pos: Vector2 = target.global_position
 		var end_pos: Vector2 = to_local(target_pos)
 		_draw_lightning_bolt(origin, end_pos, lightning_color, 3.0)
 		draw_circle(end_pos, 8.0 * (1.0 - t), Color(1.0, 1.0, 0.8, alpha * 0.8))
-		origin = end_pos
+		next_origin = end_pos
+	origin = next_origin
 
 
 func _draw_lightning_bolt(from: Vector2, to: Vector2, color: Color, width: float) -> void:
