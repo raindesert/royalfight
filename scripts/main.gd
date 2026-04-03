@@ -4,6 +4,7 @@ const BattleUnit = preload("res://scripts/battle_unit.gd")
 const BattleBuilding = preload("res://scripts/battle_building.gd")
 const DeckManagerClass = preload("res://scripts/DeckManager.gd")
 const BattleNavigatorClass = preload("res://scripts/BattleNavigator.gd")
+const SpellEffectClass = preload("res://scripts/SpellEffect.gd")
 
 const TEXTURE_ASSET_MAP := {
 	"res://assets/units/knight.svg": preload("res://assets/units/knight.svg"),
@@ -56,7 +57,8 @@ var troop_defs := {
 		"damage": 78.0,
 		"cooldown": 1.05,
 		"radius": 18.0,
-		"color": Color(0.24, 0.61, 0.98)
+		"color": Color(0.24, 0.61, 0.98),
+		"card_type": "troop"
 	},
 	"archer": {
 		"id": "archer",
@@ -69,7 +71,8 @@ var troop_defs := {
 		"damage": 52.0,
 		"cooldown": 0.9,
 		"radius": 15.0,
-		"color": Color(0.39, 0.83, 0.56)
+		"color": Color(0.39, 0.83, 0.56),
+		"card_type": "troop"
 	},
 	"giant": {
 		"id": "giant",
@@ -83,7 +86,8 @@ var troop_defs := {
 		"cooldown": 1.35,
 		"radius": 25.0,
 		"color": Color(0.93, 0.66, 0.24),
-		"targets_buildings_only": true
+		"targets_buildings_only": true,
+		"card_type": "troop"
 	},
 	"mini_pekka": {
 		"id": "mini_pekka",
@@ -96,7 +100,8 @@ var troop_defs := {
 		"damage": 185.0,
 		"cooldown": 1.2,
 		"radius": 18.0,
-		"color": Color(0.77, 0.42, 0.99)
+		"color": Color(0.77, 0.42, 0.99),
+		"card_type": "troop"
 	},
 	"wizard": {
 		"id": "wizard",
@@ -111,11 +116,64 @@ var troop_defs := {
 		"splash_radius": 65.0,
 		"cooldown": 1.1,
 		"radius": 16.0,
-		"color": Color(0.25, 0.58, 0.95)
+		"color": Color(0.25, 0.58, 0.95),
+		"card_type": "troop"
+	},
+	"fireball": {
+		"id": "fireball",
+		"name": "Fireball",
+		"ui_name": "Fireball",
+		"cost": 4,
+		"hp": 0.0,
+		"speed": 0.0,
+		"range": 0.0,
+		"damage": 0.0,
+		"cooldown": 0.0,
+		"radius": 0.0,
+		"color": Color(1.0, 0.4, 0.1),
+		"card_type": "spell",
+		"spell_effect": "damage",
+		"spell_damage": 320.0,
+		"spell_radius": 75.0
+	},
+	"freeze": {
+		"id": "freeze",
+		"name": "Freeze",
+		"ui_name": "Freeze",
+		"cost": 4,
+		"hp": 0.0,
+		"speed": 0.0,
+		"range": 0.0,
+		"damage": 0.0,
+		"cooldown": 0.0,
+		"radius": 0.0,
+		"color": Color(0.4, 0.7, 1.0),
+		"card_type": "spell",
+		"spell_effect": "freeze",
+		"spell_freeze_duration": 2.5,
+		"spell_radius": 90.0
+	},
+	"lightning": {
+		"id": "lightning",
+		"name": "Lightning",
+		"ui_name": "Lightning",
+		"cost": 3,
+		"hp": 0.0,
+		"speed": 0.0,
+		"range": 0.0,
+		"damage": 0.0,
+		"cooldown": 0.0,
+		"radius": 0.0,
+		"color": Color(1.0, 0.95, 0.3),
+		"card_type": "spell",
+		"spell_effect": "lightning",
+		"spell_lightning_count": 3,
+		"spell_lightning_damage": 200.0,
+		"spell_radius": 120.0
 	}
 }
 
-var enemy_deck = ["knight", "archer", "giant", "wizard"]
+var enemy_deck = ["knight", "archer", "giant", "wizard", "fireball"]
 
 var player_elixir := 5.0
 var enemy_elixir := 5.0
@@ -141,6 +199,7 @@ var status_label: Label
 var selected_label: Label
 var restart_button: Button
 var card_icon_textures: Dictionary = {}
+var spell_icon_textures: Dictionary = {}
 var hand_slot_buttons: Array[Button] = []
 var next_card_preview_button: Button
 var _svg_texture_cache: Dictionary = {}
@@ -160,6 +219,7 @@ var _attack_sfx_light: AudioStreamWAV
 var _attack_sfx_heavy: AudioStreamWAV
 var _hit_sfx_light: AudioStreamWAV
 var _hit_sfx_heavy: AudioStreamWAV
+var _spell_cast_sfx: AudioStreamWAV
 
 
 func _ready() -> void:
@@ -248,9 +308,14 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _load_card_icons() -> void:
-	var all_cards := ["knight", "archer", "giant", "mini_pekka", "wizard"]
-	for card_id in all_cards:
+	var troop_cards := ["knight", "archer", "giant", "mini_pekka", "wizard"]
+	for card_id in troop_cards:
 		card_icon_textures[card_id] = load_svg_texture("res://assets/units/%s.svg" % card_id, 1.35)
+	var spell_cards := ["fireball", "freeze", "lightning"]
+	for card_id in spell_cards:
+		var spell_path := "res://assets/spells/%s.svg" % card_id
+		if ResourceLoader.exists(spell_path):
+			spell_icon_textures[card_id] = ResourceLoader.load(spell_path, "Texture2D", ResourceLoader.CACHE_MODE_REUSE)
 
 
 func load_svg_texture(asset_path: String, raster_scale: float = 1.0) -> Texture2D:
@@ -270,6 +335,19 @@ func load_svg_texture(asset_path: String, raster_scale: float = 1.0) -> Texture2
 	if texture != null:
 		_svg_texture_cache[cache_key] = texture
 	return texture
+
+
+func _get_card_icon(card_id: String) -> Texture2D:
+	if card_icon_textures.has(card_id):
+		return card_icon_textures[card_id]
+	if spell_icon_textures.has(card_id):
+		return spell_icon_textures[card_id]
+	return null
+
+
+func _is_spell_card(card_id: String) -> bool:
+	return troop_defs.has(card_id) and troop_defs[card_id].get("card_type", "troop") == "spell"
+
 
 
 func _setup_ui() -> void:
@@ -359,7 +437,7 @@ func _update_hand_slots() -> void:
 			var disabled := battle_over or player_elixir < float(cost)
 			var selected := i == selected_hand_index
 			var style_key := "%s:%s:%s" % [card_id, selected, disabled]
-			button.icon = card_icon_textures.get(card_id, null)
+			button.icon = _get_card_icon(card_id)
 			button.text = "%s\nCost %d" % [str(troop_defs[card_id].get("ui_name", troop_defs[card_id]["name"])), cost]
 			button.disabled = disabled
 			button.modulate = Color.WHITE
@@ -379,7 +457,7 @@ func _update_hand_slots() -> void:
 func _update_next_preview() -> void:
 	var preview: String = _deck_manager.next_card_preview
 	if preview != "":
-		next_card_preview_button.icon = card_icon_textures.get(preview, null)
+		next_card_preview_button.icon = _get_card_icon(preview)
 		next_card_preview_button.text = str(troop_defs[preview].get("ui_name", troop_defs[preview]["name"]))
 		var style := _get_card_stylebox("preview:disabled", Color(0.2, 0.2, 0.24), Color(1.0, 1.0, 1.0, 0.1))
 		next_card_preview_button.add_theme_stylebox_override("disabled", style)
@@ -391,6 +469,9 @@ func _update_next_preview() -> void:
 func _apply_card_styles(button: Button, card_id: String, selected: bool, disabled: bool) -> void:
 	var accent: Color = troop_defs[card_id]["color"]
 	var border := Color(1.0, 0.93, 0.58) if selected else Color(1.0, 1.0, 1.0, 0.18)
+	var is_spell: bool = _is_spell_card(card_id)
+	if is_spell:
+		border = Color(1.0, 0.6, 0.2) if selected else Color(1.0, 0.7, 0.3, 0.4)
 	var style_prefix := "%s:%s:%s" % [card_id, selected, disabled]
 	button.add_theme_stylebox_override("normal", _get_card_stylebox("%s:normal" % style_prefix, accent.darkened(0.36), border))
 	button.add_theme_stylebox_override("hover", _get_card_stylebox("%s:hover" % style_prefix, accent.darkened(0.28), border.lightened(0.12)))
@@ -466,6 +547,16 @@ func _try_player_deploy(world_pos: Vector2, hand_index: int) -> void:
 	if not ARENA_RECT.has_point(world_pos):
 		status_text = "Click inside the arena."
 		return
+
+	if _is_spell_card(card_id):
+		player_elixir -= cost
+		_cast_spell(card_id, PLAYER_TEAM, world_pos)
+		status_text = "%s cast at (%.0f, %.0f)." % [troop_defs[card_id]["name"], world_pos.x, world_pos.y]
+		_deck_manager.remove_card_from_hand(hand_index)
+		selected_card_id = ""
+		selected_hand_index = -1
+		return
+
 	if world_pos.y < PLAYER_DEPLOY_Y:
 		status_text = "You can only deploy on your half of the arena."
 		return
@@ -479,6 +570,14 @@ func _try_player_deploy(world_pos: Vector2, hand_index: int) -> void:
 	selected_hand_index = -1
 
 
+func _cast_spell(card_id: String, team: int, target_pos: Vector2) -> void:
+	var config: Dictionary = troop_defs[card_id].duplicate(true)
+	var spell: Node = SpellEffectClass.new()
+	spell.setup(config, team, self, target_pos)
+	add_child(spell)
+	_play_sfx(_spell_cast_sfx, randf_range(0.9, 1.1), -8.0)
+
+
 func _enemy_play() -> void:
 	var affordable: Array[String] = []
 	for card_id in enemy_deck:
@@ -488,12 +587,45 @@ func _enemy_play() -> void:
 		ai_play_timer = 1.0
 		return
 	var card_id := affordable[randi() % affordable.size()]
+
+	if _is_spell_card(card_id):
+		enemy_elixir -= float(troop_defs[card_id]["cost"])
+		var spell_radius: float = float(troop_defs[card_id].get("spell_radius", 75.0))
+		var target_pos: Vector2 = _find_best_spell_target(card_id, ENEMY_TEAM, spell_radius)
+		_cast_spell(card_id, ENEMY_TEAM, target_pos)
+		status_text = "Enemy cast %s!" % troop_defs[card_id]["name"]
+		ai_play_timer = randf_range(1.8, 3.7)
+		return
+
 	var lane := LANE_LEFT if randi() % 2 == 0 else LANE_RIGHT
 	enemy_elixir -= float(troop_defs[card_id]["cost"])
 	_spawn_troop(card_id, ENEMY_TEAM, lane, _navigator._get_enemy_deploy_position(lane))
 	status_text = "Enemy deployed %s on %s lane." % [troop_defs[card_id]["name"], lane]
 	ai_play_timer = randf_range(1.8, 3.7)
 
+
+func _find_best_spell_target(card_id: String, team: int, radius: float) -> Vector2:
+	var enemy_team: int = PLAYER_TEAM if team == ENEMY_TEAM else ENEMY_TEAM
+	var best_pos: Vector2 = Vector2(360, 600)
+	var best_score: float = -INF
+	for entity in _battle_entities:
+		if entity.is_dead or entity.team != enemy_team:
+			continue
+		var count: int = 0
+		var total_hp: float = 0.0
+		for other in _battle_entities:
+			if other.is_dead or other.team != enemy_team:
+				continue
+			if entity.global_position.distance_to(other.global_position) <= radius:
+				count += 1
+				total_hp += other.hp
+		var score: float = float(count) * 100.0 + total_hp * 0.1
+		if entity.entity_kind == "building":
+			score += 50.0
+		if score > best_score:
+			best_score = score
+			best_pos = entity.global_position
+	return best_pos
 
 func _spawn_troop(card_id: String, team: int, lane: String, spawn_pos: Vector2) -> void:
 	var troop: Node = BattleUnit.new()
@@ -622,6 +754,7 @@ func _setup_audio() -> void:
 	_attack_sfx_heavy = _create_sfx(420.0, 210.0, 0.08, 0.28, 0.18)
 	_hit_sfx_light = _create_sfx(940.0, 180.0, 0.06, 0.24, 0.20)
 	_hit_sfx_heavy = _create_sfx(280.0, 90.0, 0.10, 0.34, 0.32)
+	_spell_cast_sfx = _create_sfx(520.0, 180.0, 0.18, 0.18, 0.12)
 	for _i in range(8):
 		var player: AudioStreamPlayer = AudioStreamPlayer.new()
 		player.bus = "Master"
@@ -770,6 +903,9 @@ func _on_hand_slot_pressed(slot_index: int) -> void:
 	else:
 		selected_card_id = card_id
 		selected_hand_index = slot_index
+	if _is_spell_card(card_id):
+		status_text = "Selected %s. Click anywhere on the arena to cast." % troop_defs[card_id]["name"]
+	else:
 		status_text = "Selected %s. Click left or right lane to deploy." % troop_defs[card_id]["name"]
 
 

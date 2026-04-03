@@ -128,19 +128,19 @@
 **Wizard定义：**
 ```gdscript
 "wizard": {
-    "id": "wizard",
-    "name": "Wizard",
-    "ui_name": "Wizard",
-    "cost": 5,
-    "hp": 340.0,
-    "speed": 72.0,
-    "range": 145.0,
-    "damage": 130.0,
-    "splash_damage": 90.0,
-    "splash_radius": 65.0,
-    "cooldown": 1.1,
-    "radius": 16.0,
-    "color": Color(0.25, 0.58, 0.95)
+	"id": "wizard",
+	"name": "Wizard",
+	"ui_name": "Wizard",
+	"cost": 5,
+	"hp": 340.0,
+	"speed": 72.0,
+	"range": 145.0,
+	"damage": 130.0,
+	"splash_damage": 90.0,
+	"splash_radius": 65.0,
+	"cooldown": 1.1,
+	"radius": 16.0,
+	"color": Color(0.25, 0.58, 0.95)
 }
 ```
 
@@ -366,7 +366,7 @@
 - ~~死亡反馈~~（已完成）
 - ~~溅射法术特效~~（已完成）
 - 更细的桥口拥堵和碰撞表现。
-- 正式角色动画（骨骼/spine 方案选型）
+- 正式角色动画（AnimatedSprite2D + SpriteFrames 已实现）
 
 ## 验证状态
 
@@ -374,3 +374,5 @@
 最近一轮围绕弹道解算、桥梁约束、移动端部署和动画数值保护的修改，也已经重新跑过，无新增脚本错误。
 
 截至 2026-03-26（下午），新增死亡反馈、箭塔拖尾、溅射Wizard单位及特效代码验证通过，无新增脚本错误或警告。
+
+截至 2026-03-26（傍晚），AnimatedSprite2D + SpriteFrames动画系统已实现Knight的idle/walk/attack/death动画，PNG序列帧自动生成，当帧不存在时自动回退到_draw()绘制模式。

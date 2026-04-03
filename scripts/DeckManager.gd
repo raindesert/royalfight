@@ -1,7 +1,7 @@
 class_name DeckManager
 extends Node
 
-const PLAYER_DECK_TEMPLATE := ["knight", "archer", "giant", "mini_pekka", "wizard", "archer", "giant", "mini_pekka"]
+const PLAYER_DECK_TEMPLATE := ["knight", "archer", "giant", "mini_pekka", "wizard", "fireball", "freeze", "lightning"]
 
 var deck: Array = []
 var hand: Array = []

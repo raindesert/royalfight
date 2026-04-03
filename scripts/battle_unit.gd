@@ -50,6 +50,7 @@ var _death_explosion: bool = false
 var _splash_effect_timer: float = 0.0
 var _splash_effect_pos: Vector2 = Vector2.ZERO
 var _splash_effect_radius: float = 0.0
+var _frozen_timer: float = 0.0
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -149,6 +150,12 @@ func _process(delta: float) -> void:
 		else:
 			_request_redraw()
 			return
+
+	if _frozen_timer > 0.0:
+		_frozen_timer -= delta
+		_visual_dirty = true
+		_request_redraw()
+		return
 
 	if _hitstun_timer > 0.0 or _recovery_timer > 0.0:
 		_visual_dirty = true
@@ -260,12 +267,23 @@ func get_sight_radius() -> float:
 func remember_attacker(attacker: Node) -> void:
 	if attacker == null:
 		return
-	if not is_instance_valid(attacker) or attacker.is_dead or attacker.team == team:
+	if not is_instance_valid(attacker):
+		return
+	if attacker.has_method("get_is_dead"):
+		if attacker.get_is_dead():
+			return
+	elif attacker.get("is_dead") != null and attacker.is_dead:
+		return
+	if attacker.get("team") != null and attacker.team == team:
 		return
 	_focus_target = attacker
 	_focus_timer = 2.2
 	current_target = attacker
 	_retarget_timer = 0.0
+
+
+func get_is_dead() -> bool:
+	return is_dead
 
 
 func _follow_lane_path(delta: float) -> void:
@@ -310,6 +328,11 @@ func _apply_separation(delta: float) -> void:
 	var push: Vector2 = controller.get_unit_separation(self)
 	if push.length() > 0.001:
 		position += push.limit_length(42.0 * delta)
+
+
+
+func apply_freeze(duration: float) -> void:
+	_frozen_timer = duration
 
 
 func clear_target_reference(target: Node) -> void:
@@ -446,6 +469,16 @@ func _draw() -> void:
 				var ring_alpha: float = (1.0 - death_progress) * 0.5 * (1.0 - ring * 0.3)
 				draw_circle(Vector2.ZERO, ring_radius, Color(1.0, 0.7, 0.4, ring_alpha))
 			draw_circle(Vector2.ZERO, radius * 0.5 * expand_scale, Color(1.0, 0.9, 0.6, alpha * 0.6))
+
+	if _frozen_timer > 0.0:
+		var frozen_alpha: float = 0.4 + sin(_frozen_timer * 6.0) * 0.15
+		draw_circle(Vector2.ZERO, radius + 4.0, Color(0.5, 0.8, 1.0, frozen_alpha * 0.5), false, 3.0)
+		draw_circle(Vector2.ZERO, radius * 0.6, Color(0.7, 0.9, 1.0, frozen_alpha * 0.3))
+		for ice_crystal in range(4):
+			var angle: float = float(ice_crystal) * TAU / 4.0 + _frozen_timer * 0.5
+			var cx: float = cos(angle) * radius * 0.7
+			var cy: float = sin(angle) * radius * 0.7
+			draw_circle(Vector2(cx, cy), 4.0, Color(0.8, 1.0, 1.0, frozen_alpha * 0.6))
 
 	if _splash_effect_timer > 0.0 and _splash_effect_radius > 0.0:
 		var splash_t: float = 1.0 - clampf(_splash_effect_timer / 0.4, 0.0, 1.0)
