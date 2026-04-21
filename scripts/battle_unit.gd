@@ -18,11 +18,14 @@ var color: Color = Color.WHITE
 var targets_buildings_only: bool = false
 var splash_damage: float = 0.0
 var splash_radius: float = 0.0
+var heal_amount: float = 0.0
+var heal_cooldown: float = 0.0
 var is_dead: bool = false
 var current_target: Node = null
 var icon_texture: Texture2D = null
 
 var _attack_timer: float = 0.0
+var _heal_timer: float = 0.0
 var _retarget_timer: float = 0.0
 var _focus_target: Node = null
 var _focus_timer: float = 0.0
@@ -51,6 +54,11 @@ var _splash_effect_timer: float = 0.0
 var _splash_effect_pos: Vector2 = Vector2.ZERO
 var _splash_effect_radius: float = 0.0
 var _frozen_timer: float = 0.0
+var _rage_timer: float = 0.0
+var _rage_speed_mult: float = 1.0
+var _rage_damage_mult: float = 1.0
+var _base_speed: float = 0.0
+var _base_damage: float = 0.0
 
 
 func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_position: Vector2) -> void:
@@ -71,6 +79,10 @@ func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_positi
 	targets_buildings_only = bool(config.get("targets_buildings_only", false))
 	splash_damage = float(config.get("splash_damage", 0.0))
 	splash_radius = float(config.get("splash_radius", 0.0))
+	heal_amount = float(config.get("heal_amount", 0.0))
+	heal_cooldown = float(config.get("heal_cooldown", 1.0))
+	_base_speed = speed
+	_base_damage = damage
 	icon_texture = controller.load_svg_texture("res://assets/units/%s.svg" % troop_id, 1.65)
 	position = spawn_position
 	_lane_side_preference = -1.0 if int(get_instance_id()) % 2 == 0 else 1.0
@@ -121,10 +133,10 @@ func _process(delta: float) -> void:
 	if _has_projectile:
 		_projectile_progress += delta
 		_visual_dirty = true
-		if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+		if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _is_entity_dead(_projectile_target_node):
 			_projectile_target = _projectile_target_node.global_position
 		if _projectile_progress >= _projectile_duration:
-			if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _projectile_target_node.is_dead:
+			if _projectile_target_node != null and is_instance_valid(_projectile_target_node) and not _is_entity_dead(_projectile_target_node):
 				var target_pos: Vector2 = _projectile_target_node.global_position
 				_projectile_target_node.take_damage(damage, self)
 				controller.on_damage_dealt(_projectile_target_node, self)
@@ -157,27 +169,41 @@ func _process(delta: float) -> void:
 		_request_redraw()
 		return
 
+	if _rage_timer > 0.0:
+		_rage_timer -= delta
+		if _rage_timer <= 0.0:
+			speed = _base_speed
+			damage = _base_damage
+			_rage_speed_mult = 1.0
+			_rage_damage_mult = 1.0
+			_visual_dirty = true
+
 	if _hitstun_timer > 0.0 or _recovery_timer > 0.0:
 		_visual_dirty = true
 		_request_redraw()
 		return
 
-	current_target = controller.update_unit_target(self, current_target, _retarget_timer <= 0.0)
-	if _retarget_timer <= 0.0:
-		_retarget_timer = 0.18
+	_heal_timer = max(_heal_timer - delta, 0.0)
 
-	if current_target != null:
-		var target_radius: float = float(current_target.radius)
-		var offset: Vector2 = current_target.global_position - global_position
-		var distance: float = offset.length()
-		var desired_distance: float = attack_range + radius + target_radius
-		if distance <= desired_distance:
-			if _attack_timer <= 0.0:
-				_begin_attack(current_target)
-		else:
-			_move_toward_position(current_target.global_position, delta)
+	if heal_amount > 0.0:
+		_process_healer(delta)
 	else:
-		_follow_lane_path(delta)
+		current_target = controller.update_unit_target(self, current_target, _retarget_timer <= 0.0)
+		if _retarget_timer <= 0.0:
+			_retarget_timer = 0.18
+
+		if current_target != null:
+			var target_radius: float = float(current_target.radius)
+			var offset: Vector2 = current_target.global_position - global_position
+			var distance: float = offset.length()
+			var desired_distance: float = attack_range + radius + target_radius
+			if distance <= desired_distance:
+				if _attack_timer <= 0.0:
+					_begin_attack(current_target)
+			else:
+				_move_toward_position(current_target.global_position, delta)
+		else:
+			_follow_lane_path(delta)
 
 	_apply_separation(delta)
 	position = controller.constrain_unit_position(self, position)
@@ -192,7 +218,7 @@ func _request_redraw() -> void:
 
 
 func _begin_attack(target: Node) -> void:
-	if target == null or not is_instance_valid(target) or target.is_dead:
+	if target == null or not is_instance_valid(target) or _is_entity_dead(target):
 		return
 	_pending_target = target
 	_windup_duration = min(0.28, attack_cooldown * 0.35)
@@ -206,7 +232,7 @@ func _begin_attack(target: Node) -> void:
 
 func _resolve_attack() -> void:
 	var resolved_target: Node = _pending_target
-	if resolved_target == null or not is_instance_valid(resolved_target) or resolved_target.is_dead:
+	if resolved_target == null or not is_instance_valid(resolved_target) or _is_entity_dead(resolved_target):
 		_attack_timer = attack_cooldown
 		_pending_target = null
 		_windup_timer = 0.0
@@ -234,9 +260,11 @@ func _resolve_attack() -> void:
 
 
 func get_focus_target() -> Node:
-	if _focus_target != null and is_instance_valid(_focus_target) and not _focus_target.is_dead:
-		return _focus_target
-	return null
+	if _focus_target == null or not is_instance_valid(_focus_target):
+		return null
+	if _is_entity_dead(_focus_target):
+		return null
+	return _focus_target
 
 
 func _apply_splash_damage(center: Vector2) -> void:
@@ -248,7 +276,7 @@ func _apply_splash_damage(center: Vector2) -> void:
 	_visual_dirty = true
 	var entities: Array = controller.get_battle_entities()
 	for entity in entities:
-		if entity == self or entity.is_dead or entity.team == team:
+		if entity == self or _is_entity_dead(entity) or entity.team == team:
 			continue
 		var dist: float = center.distance_to(entity.global_position)
 		if dist <= splash_radius:
@@ -269,10 +297,7 @@ func remember_attacker(attacker: Node) -> void:
 		return
 	if not is_instance_valid(attacker):
 		return
-	if attacker.has_method("get_is_dead"):
-		if attacker.get_is_dead():
-			return
-	elif attacker.get("is_dead") != null and attacker.is_dead:
+	if _is_entity_dead(attacker):
 		return
 	if attacker.get("team") != null and attacker.team == team:
 		return
@@ -282,8 +307,14 @@ func remember_attacker(attacker: Node) -> void:
 	_retarget_timer = 0.0
 
 
-func get_is_dead() -> bool:
-	return is_dead
+func _is_entity_dead(entity: Node) -> bool:
+	if entity == null or not is_instance_valid(entity):
+		return true
+	if entity.has_method("get_is_dead"):
+		return entity.get_is_dead()
+	if entity.get("is_dead") != null:
+		return entity.is_dead
+	return false
 
 
 func _follow_lane_path(delta: float) -> void:
@@ -329,6 +360,64 @@ func _apply_separation(delta: float) -> void:
 	if push.length() > 0.001:
 		position += push.limit_length(42.0 * delta)
 
+
+func _process_healer(delta: float) -> void:
+	var heal_target: Node = _find_heal_target()
+	if heal_target != null:
+		var offset: Vector2 = heal_target.global_position - global_position
+		var distance: float = offset.length()
+		var desired_distance: float = attack_range + radius + float(heal_target.radius)
+		if distance <= desired_distance:
+			if _heal_timer <= 0.0:
+				_perform_heal(heal_target)
+		else:
+			_move_toward_position(heal_target.global_position, delta)
+	else:
+		_follow_lane_path(delta)
+
+
+func _find_heal_target() -> Node:
+	var best_target: Node = null
+	var best_hp_ratio: float = 1.0
+	var entities: Array = controller.get_battle_entities()
+	for entity in entities:
+		if entity == self or _is_entity_dead(entity) or entity.team != team:
+			continue
+		if entity.get("entity_kind") == null or entity.entity_kind != "unit":
+			continue
+		if entity.get("heal_amount") != null and entity.heal_amount > 0.0:
+			continue
+		var entity_max_hp: float = float(entity.get("max_hp", 1.0))
+		var entity_hp: float = float(entity.get("hp", entity_max_hp))
+		var hp_ratio: float = entity_hp / entity_max_hp
+		if hp_ratio < 1.0 and hp_ratio < best_hp_ratio:
+			best_hp_ratio = hp_ratio
+			best_target = entity
+	return best_target
+
+
+func _perform_heal(target: Node) -> void:
+	if target == null or not is_instance_valid(target) or _is_entity_dead(target):
+		return
+	var target_max_hp: float = float(target.max_hp) if target.get("max_hp") != null else 1.0
+	var target_hp: float = float(target.hp) if target.get("hp") != null else target_max_hp
+	if target_hp >= target_max_hp:
+		return
+	var new_hp: float = min(target_hp + heal_amount, target_max_hp)
+	target.hp = new_hp
+	_heal_timer = heal_cooldown
+	_visual_dirty = true
+	controller.play_attack_sfx(self)
+	queue_redraw()
+
+
+func apply_rage(duration: float, speed_mult: float, damage_mult: float) -> void:
+	_rage_timer = duration
+	_rage_speed_mult = speed_mult
+	_rage_damage_mult = damage_mult
+	speed = _base_speed * speed_mult
+	damage = _base_damage * damage_mult
+	_visual_dirty = true
 
 
 func apply_freeze(duration: float) -> void:
@@ -436,6 +525,11 @@ func _draw() -> void:
 	var hp_ratio := 0.0 if max_hp <= 0.0 else hp / max_hp
 	draw_rect(Rect2(bar_rect.position, Vector2(bar_width * hp_ratio, 6.0)), Color(0.36, 0.9, 0.42))
 
+	if heal_amount > 0.0:
+		var heal_pulse: float = 0.5 + sin(_heal_timer * 4.0) * 0.2
+		draw_circle(Vector2.ZERO, radius + 4.0, Color(0.4, 1.0, 0.5, heal_pulse * 0.25), false, 2.5)
+		draw_circle(Vector2(0.0, -radius * 0.3), radius * 0.25, Color(0.5, 1.0, 0.6, 0.35))
+
 	if _has_projectile and _projectile_duration > 0.0:
 		var t: float = clampf(_projectile_progress / _projectile_duration, 0.0, 1.0)
 		var arc_height: float = 35.0
@@ -485,9 +579,27 @@ func _draw() -> void:
 		var splash_local_pos: Vector2 = to_local(_splash_effect_pos)
 		var splash_current_radius: float = _splash_effect_radius * (0.3 + splash_t * 0.7)
 		var splash_alpha: float = (1.0 - splash_t) * 0.6
+		var is_bomber: bool = damage <= 0.0 and splash_damage > 100.0
 		for wave in range(2):
 			var wave_radius: float = splash_current_radius * (1.0 + wave * 0.4)
 			var wave_alpha: float = splash_alpha * (1.0 - wave * 0.35)
-			var wave_color := Color(0.35, 0.55, 1.0, wave_alpha)
+			var wave_color: Color
+			if is_bomber:
+				wave_color = Color(0.9, 0.5 + wave * 0.15, 0.1, wave_alpha)
+			else:
+				wave_color = Color(0.35, 0.55, 1.0, wave_alpha)
 			draw_circle(splash_local_pos, wave_radius, wave_color, false, 3.0)
-		draw_circle(splash_local_pos, splash_current_radius * 0.3, Color(0.7, 0.85, 1.0, splash_alpha * 0.8))
+		if is_bomber:
+			draw_circle(splash_local_pos, splash_current_radius * 0.3, Color(1.0, 0.7, 0.2, splash_alpha * 0.9))
+			for spark in range(6):
+				var angle: float = float(spark) * TAU / 6.0 + splash_t * 2.0
+				var dist: float = splash_current_radius * (0.3 + randf() * 0.6)
+				draw_circle(splash_local_pos + Vector2(cos(angle) * dist, sin(angle) * dist), 3.0 * (1.0 - splash_t), Color(1.0, 0.6, 0.1, splash_alpha))
+		else:
+			draw_circle(splash_local_pos, splash_current_radius * 0.3, Color(0.7, 0.85, 1.0, splash_alpha * 0.8))
+
+	if _rage_timer > 0.0:
+		var rage_pulse: float = 0.5 + sin(_rage_timer * 8.0) * 0.3
+		var rage_color := Color(1.0, 0.2, 0.35, rage_pulse * 0.45)
+		draw_circle(Vector2.ZERO, radius + 7.0, rage_color, false, 3.5)
+		draw_circle(Vector2.ZERO, radius + 3.0, Color(1.0, 0.5, 0.3, rage_pulse * 0.25))

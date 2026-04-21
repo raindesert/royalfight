@@ -5,6 +5,7 @@ const BattleBuilding = preload("res://scripts/battle_building.gd")
 const DeckManagerClass = preload("res://scripts/DeckManager.gd")
 const BattleNavigatorClass = preload("res://scripts/BattleNavigator.gd")
 const SpellEffectClass = preload("res://scripts/SpellEffect.gd")
+const CardDatabaseClass = preload("res://scripts/CardDatabase.gd")
 
 const TEXTURE_ASSET_MAP := {
 	"res://assets/units/knight.svg": preload("res://assets/units/knight.svg"),
@@ -45,135 +46,12 @@ const FRONTLINE_Y := {
 	ENEMY_TEAM: 440.0
 }
 
-var troop_defs := {
-	"knight": {
-		"id": "knight",
-		"name": "Knight",
-		"ui_name": "Knight",
-		"cost": 3,
-		"hp": 620.0,
-		"speed": 92.0,
-		"range": 20.0,
-		"damage": 78.0,
-		"cooldown": 1.05,
-		"radius": 18.0,
-		"color": Color(0.24, 0.61, 0.98),
-		"card_type": "troop"
-	},
-	"archer": {
-		"id": "archer",
-		"name": "Archer",
-		"ui_name": "Archer",
-		"cost": 3,
-		"hp": 260.0,
-		"speed": 82.0,
-		"range": 165.0,
-		"damage": 52.0,
-		"cooldown": 0.9,
-		"radius": 15.0,
-		"color": Color(0.39, 0.83, 0.56),
-		"card_type": "troop"
-	},
-	"giant": {
-		"id": "giant",
-		"name": "Giant",
-		"ui_name": "Giant",
-		"cost": 5,
-		"hp": 1650.0,
-		"speed": 58.0,
-		"range": 24.0,
-		"damage": 155.0,
-		"cooldown": 1.35,
-		"radius": 25.0,
-		"color": Color(0.93, 0.66, 0.24),
-		"targets_buildings_only": true,
-		"card_type": "troop"
-	},
-	"mini_pekka": {
-		"id": "mini_pekka",
-		"name": "Mini P.E.K.K.A",
-		"ui_name": "Mini PEKKA",
-		"cost": 4,
-		"hp": 720.0,
-		"speed": 98.0,
-		"range": 20.0,
-		"damage": 185.0,
-		"cooldown": 1.2,
-		"radius": 18.0,
-		"color": Color(0.77, 0.42, 0.99),
-		"card_type": "troop"
-	},
-	"wizard": {
-		"id": "wizard",
-		"name": "Wizard",
-		"ui_name": "Wizard",
-		"cost": 5,
-		"hp": 340.0,
-		"speed": 72.0,
-		"range": 145.0,
-		"damage": 130.0,
-		"splash_damage": 90.0,
-		"splash_radius": 65.0,
-		"cooldown": 1.1,
-		"radius": 16.0,
-		"color": Color(0.25, 0.58, 0.95),
-		"card_type": "troop"
-	},
-	"fireball": {
-		"id": "fireball",
-		"name": "Fireball",
-		"ui_name": "Fireball",
-		"cost": 4,
-		"hp": 0.0,
-		"speed": 0.0,
-		"range": 0.0,
-		"damage": 0.0,
-		"cooldown": 0.0,
-		"radius": 0.0,
-		"color": Color(1.0, 0.4, 0.1),
-		"card_type": "spell",
-		"spell_effect": "damage",
-		"spell_damage": 320.0,
-		"spell_radius": 75.0
-	},
-	"freeze": {
-		"id": "freeze",
-		"name": "Freeze",
-		"ui_name": "Freeze",
-		"cost": 4,
-		"hp": 0.0,
-		"speed": 0.0,
-		"range": 0.0,
-		"damage": 0.0,
-		"cooldown": 0.0,
-		"radius": 0.0,
-		"color": Color(0.4, 0.7, 1.0),
-		"card_type": "spell",
-		"spell_effect": "freeze",
-		"spell_freeze_duration": 2.5,
-		"spell_radius": 90.0
-	},
-	"lightning": {
-		"id": "lightning",
-		"name": "Lightning",
-		"ui_name": "Lightning",
-		"cost": 3,
-		"hp": 0.0,
-		"speed": 0.0,
-		"range": 0.0,
-		"damage": 0.0,
-		"cooldown": 0.0,
-		"radius": 0.0,
-		"color": Color(1.0, 0.95, 0.3),
-		"card_type": "spell",
-		"spell_effect": "lightning",
-		"spell_lightning_count": 3,
-		"spell_lightning_damage": 200.0,
-		"spell_radius": 120.0
-	}
-}
+var troop_defs: Dictionary:
+	get:
+		return CardDatabaseClass.troop_defs
 
-var enemy_deck = ["knight", "archer", "giant", "wizard", "fireball"]
+var enemy_deck = ["knight", "archer", "giant", "wizard", "fireball", "rage", "healer", "bomber"]
+var player_deck = ["knight", "archer", "giant", "mini_pekka", "wizard", "fireball", "freeze", "lightning", "rage", "healer", "bomber"]
 
 var player_elixir := 5.0
 var enemy_elixir := 5.0
@@ -311,7 +189,7 @@ func _load_card_icons() -> void:
 	var troop_cards := ["knight", "archer", "giant", "mini_pekka", "wizard"]
 	for card_id in troop_cards:
 		card_icon_textures[card_id] = load_svg_texture("res://assets/units/%s.svg" % card_id, 1.35)
-	var spell_cards := ["fireball", "freeze", "lightning"]
+	var spell_cards := ["fireball", "freeze", "lightning", "rage"]
 	for card_id in spell_cards:
 		var spell_path := "res://assets/spells/%s.svg" % card_id
 		if ResourceLoader.exists(spell_path):
@@ -586,7 +464,8 @@ func _enemy_play() -> void:
 	if affordable.is_empty():
 		ai_play_timer = 1.0
 		return
-	var card_id := affordable[randi() % affordable.size()]
+
+	var card_id := _choose_best_ai_card(affordable)
 
 	if _is_spell_card(card_id):
 		enemy_elixir -= float(troop_defs[card_id]["cost"])
@@ -597,11 +476,124 @@ func _enemy_play() -> void:
 		ai_play_timer = randf_range(1.8, 3.7)
 		return
 
-	var lane := LANE_LEFT if randi() % 2 == 0 else LANE_RIGHT
+	var lane := _choose_best_ai_lane(card_id)
 	enemy_elixir -= float(troop_defs[card_id]["cost"])
 	_spawn_troop(card_id, ENEMY_TEAM, lane, _navigator._get_enemy_deploy_position(lane))
 	status_text = "Enemy deployed %s on %s lane." % [troop_defs[card_id]["name"], lane]
 	ai_play_timer = randf_range(1.8, 3.7)
+
+
+func _choose_best_ai_card(affordable: Array[String]) -> String:
+	var player_push_strength: float = _calculate_lane_strength(PLAYER_TEAM)
+	var enemy_push_strength: float = _calculate_lane_strength(ENEMY_TEAM)
+	var needs_defense: bool = player_push_strength > enemy_push_strength + 200.0
+
+	var best_card: String = affordable[0]
+	var best_score: float = -INF
+
+	for card_id in affordable:
+		var card_info: Dictionary = troop_defs[card_id]
+		var score: float = 0.0
+		var card_type: String = card_info.get("card_type", "troop")
+
+		if card_type == "spell":
+			var spell_effect: String = card_info.get("spell_effect", "damage")
+			if spell_effect == "damage" or spell_effect == "lightning":
+				var spell_damage: float = float(card_info.get("spell_damage", 0.0)) + float(card_info.get("spell_lightning_damage", 0.0)) * float(card_info.get("spell_lightning_count", 1.0))
+				var target_value: float = _estimate_spell_target_value(card_id, ENEMY_TEAM)
+				score = target_value * spell_damage * 0.01
+			elif spell_effect == "freeze":
+				score = 80.0 if needs_defense else 30.0
+			elif spell_effect == "rage":
+				score = 70.0 if enemy_push_strength > 150.0 else 20.0
+		else:
+			var hp: float = float(card_info.get("hp", 0.0))
+			var dmg: float = float(card_info.get("damage", 0.0)) + float(card_info.get("splash_damage", 0.0))
+			var cost: float = float(card_info.get("cost", 1.0))
+			var value: float = (hp * 0.3 + dmg * 2.0) / cost
+
+			if card_info.get("heal_amount", 0.0) > 0.0:
+				score = 60.0 if enemy_push_strength > 100.0 else value
+			elif needs_defense and hp > 400.0:
+				score = value * 1.5
+			elif not needs_defense and dmg > 100.0:
+				score = value * 1.3
+			else:
+				score = value
+
+		if score > best_score:
+			best_score = score
+			best_card = card_id
+
+	return best_card
+
+
+func _calculate_lane_strength(team_id: int) -> float:
+	var strength: float = 0.0
+	for entity in _battle_entities:
+		if entity.get("team") == null or entity.team != team_id:
+			continue
+		if entity.get("entity_kind") == null or entity.entity_kind != "unit":
+			continue
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead:
+			continue
+		var hp: float = float(entity.hp) if entity.get("hp") != null else 0.0
+		var dmg: float = float(entity.damage) if entity.get("damage") != null else 0.0
+		strength += hp * 0.2 + dmg * 1.5
+	return strength
+
+
+func _estimate_spell_target_value(card_id: String, team: int) -> float:
+	var enemy_team: int = PLAYER_TEAM if team == ENEMY_TEAM else ENEMY_TEAM
+	var count: int = 0
+	for entity in _battle_entities:
+		if entity.get("team") == null or entity.team != enemy_team:
+			continue
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead:
+			continue
+		count += 1
+	return float(count) * 15.0 + 20.0
+
+
+func _choose_best_ai_lane(card_id: String) -> String:
+	var left_strength: float = 0.0
+	var right_strength: float = 0.0
+	for entity in _battle_entities:
+		if entity.get("team") == null or entity.team != PLAYER_TEAM:
+			continue
+		if entity.get("entity_kind") == null or entity.entity_kind != "unit":
+			continue
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead:
+			continue
+		if entity.get("lane") == null:
+			continue
+		if entity.lane == LANE_LEFT:
+			left_strength += float(entity.hp) * 0.3 + float(entity.damage) * 1.5
+		elif entity.lane == LANE_RIGHT:
+			right_strength += float(entity.hp) * 0.3 + float(entity.damage) * 1.5
+
+	var card_info: Dictionary = troop_defs[card_id]
+	var is_defensive: bool = float(card_info.get("hp", 0.0)) > 500.0 or card_info.get("heal_amount", 0.0) > 0.0
+
+	if is_defensive:
+		return LANE_LEFT if left_strength > right_strength else LANE_RIGHT
+	else:
+		return LANE_LEFT if left_strength < right_strength else LANE_RIGHT
 
 
 func _find_best_spell_target(card_id: String, team: int, radius: float) -> Vector2:
@@ -609,12 +601,22 @@ func _find_best_spell_target(card_id: String, team: int, radius: float) -> Vecto
 	var best_pos: Vector2 = Vector2(360, 600)
 	var best_score: float = -INF
 	for entity in _battle_entities:
-		if entity.is_dead or entity.team != enemy_team:
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead or entity.team != enemy_team:
 			continue
 		var count: int = 0
 		var total_hp: float = 0.0
 		for other in _battle_entities:
-			if other.is_dead or other.team != enemy_team:
+			var other_is_dead: bool = false
+			if other.has_method("get_is_dead"):
+				other_is_dead = other.get_is_dead()
+			elif other.get("is_dead") != null:
+				other_is_dead = other.is_dead
+			if other_is_dead or other.team != enemy_team:
 				continue
 			if entity.global_position.distance_to(other.global_position) <= radius:
 				count += 1
@@ -661,7 +663,12 @@ func update_unit_target(unit: Node, current_target, force_retarget: bool) -> Nod
 	for entity in _battle_entities:
 		if entity == unit:
 			continue
-		if entity.is_dead or entity.team == unit.team:
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead or entity.team == unit.team:
 			continue
 		if unit.targets_buildings_only and entity.entity_kind == "unit":
 			continue
@@ -687,9 +694,14 @@ func _is_target_valid(unit: Node, target) -> bool:
 		return false
 	if not is_instance_valid(target):
 		return false
-	if target.is_dead or target.team == unit.team:
+	var target_is_dead: bool = false
+	if target.has_method("get_is_dead"):
+		target_is_dead = target.get_is_dead()
+	elif target.get("is_dead") != null:
+		target_is_dead = target.is_dead
+	if target_is_dead or target.team == unit.team:
 		return false
-	if unit.targets_buildings_only and target.entity_kind == "unit":
+	if target.get("entity_kind") == null or (unit.targets_buildings_only and target.entity_kind == "unit"):
 		return false
 	var leash_distance: float = 320.0 + unit.attack_range
 	if target.entity_kind == "unit" and unit.global_position.distance_to(target.global_position) > leash_distance:
@@ -701,7 +713,12 @@ func choose_target_for_building(building: Node) -> Node:
 	var best_target: Node = null
 	var best_score: float = INF
 	for entity in _battle_units:
-		if entity.is_dead or entity.team == building.team:
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead or entity.team == building.team:
 			continue
 		var distance: float = building.global_position.distance_to(entity.global_position)
 		var score: float = distance
@@ -804,7 +821,12 @@ func get_friendly_blocker(unit: Node, desired_dir: Vector2) -> Node:
 	for entity in _battle_units:
 		if entity == unit:
 			continue
-		if entity.is_dead or entity.entity_kind != "unit" or entity.team != unit.team or entity.lane != unit.lane:
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead or entity.entity_kind != "unit" or entity.team != unit.team or entity.lane != unit.lane:
 			continue
 		var offset: Vector2 = entity.global_position - unit.global_position
 		var forward: float = offset.dot(desired_dir)
@@ -824,7 +846,12 @@ func get_unit_separation(unit: Node) -> Vector2:
 	for entity in _battle_units:
 		if entity == unit:
 			continue
-		if entity.is_dead or entity.entity_kind != "unit" or entity.lane != unit.lane:
+		var entity_is_dead: bool = false
+		if entity.has_method("get_is_dead"):
+			entity_is_dead = entity.get_is_dead()
+		elif entity.get("is_dead") != null:
+			entity_is_dead = entity.is_dead
+		if entity_is_dead or entity.entity_kind != "unit" or entity.lane != unit.lane:
 			continue
 		var offset: Vector2 = unit.global_position - entity.global_position
 		var distance: float = offset.length()
@@ -837,7 +864,12 @@ func get_unit_separation(unit: Node) -> Vector2:
 func on_entity_destroyed(entity: Node) -> void:
 	_unregister_entity(entity)
 	for other in _battle_entities.duplicate():
-		if other == entity or other.is_dead:
+		var other_is_dead: bool = false
+		if other.has_method("get_is_dead"):
+			other_is_dead = other.get_is_dead()
+		elif other.get("is_dead") != null:
+			other_is_dead = other.is_dead
+		if other == entity or other_is_dead:
 			continue
 		if other.has_method("clear_target_reference"):
 			other.clear_target_reference(entity)
@@ -856,11 +888,17 @@ func _check_victory() -> void:
 	var player_king_alive := false
 	var enemy_king_alive := false
 	for entity in _battle_buildings:
-		if entity.entity_kind == "building" and entity.is_king and not entity.is_dead:
-			if entity.team == PLAYER_TEAM:
-				player_king_alive = true
-			else:
-				enemy_king_alive = true
+		if entity.entity_kind == "building" and entity.is_king:
+			var entity_is_dead: bool = false
+			if entity.has_method("get_is_dead"):
+				entity_is_dead = entity.get_is_dead()
+			elif entity.get("is_dead") != null:
+				entity_is_dead = entity.is_dead
+			if not entity_is_dead:
+				if entity.team == PLAYER_TEAM:
+					player_king_alive = true
+				else:
+					enemy_king_alive = true
 	if not enemy_king_alive:
 		battle_over = true
 		winner_text = "Victory! Enemy King Tower destroyed."

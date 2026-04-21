@@ -11,6 +11,9 @@ var damage: float = 0.0
 var freeze_duration: float = 0.0
 var lightning_count: int = 0
 var lightning_damage: float = 0.0
+var rage_duration: float = 0.0
+var rage_speed_mult: float = 1.0
+var rage_damage_mult: float = 1.0
 
 var _duration: float = 0.0
 var _progress: float = 0.0
@@ -38,6 +41,9 @@ func setup(config: Dictionary, team_id: int, game_controller: Node, target_pos: 
 	freeze_duration = float(config.get("spell_freeze_duration", 0.0))
 	lightning_count = int(config.get("spell_lightning_count", 0))
 	lightning_damage = float(config.get("spell_lightning_damage", 0.0))
+	rage_duration = float(config.get("spell_rage_duration", 0.0))
+	rage_speed_mult = float(config.get("spell_rage_speed_mult", 1.0))
+	rage_damage_mult = float(config.get("spell_rage_damage_mult", 1.0))
 	z_index = 10
 	position = cast_position
 
@@ -53,12 +59,25 @@ func setup(config: Dictionary, team_id: int, game_controller: Node, target_pos: 
 			_lightning_timer = 0.0
 			_lightning_index = 0
 			_build_lightning_chain()
+		"rage":
+			_duration = 0.7
+			_apply_rage_effect()
+
+
+func _is_entity_dead(entity: Node) -> bool:
+	if entity == null or not is_instance_valid(entity):
+		return true
+	if entity.has_method("get_is_dead"):
+		return entity.get_is_dead()
+	if entity.get("is_dead") != null:
+		return entity.is_dead
+	return false
 
 
 func _apply_damage_effect() -> void:
 	var entities: Array = controller.get_battle_entities()
 	for entity in entities:
-		if entity.is_dead or entity.team == team:
+		if _is_entity_dead(entity) or entity.team == team:
 			continue
 		var dist: float = cast_position.distance_to(entity.global_position)
 		if dist <= radius:
@@ -70,9 +89,9 @@ func _apply_damage_effect() -> void:
 func _apply_freeze_effect() -> void:
 	var entities: Array = controller.get_battle_entities()
 	for entity in entities:
-		if entity.is_dead or entity.team == team:
+		if _is_entity_dead(entity) or entity.team == team:
 			continue
-		if entity.entity_kind != "unit":
+		if entity.get("entity_kind") == null or entity.entity_kind != "unit":
 			continue
 		var dist: float = cast_position.distance_to(entity.global_position)
 		if dist <= radius:
@@ -81,11 +100,25 @@ func _apply_freeze_effect() -> void:
 			_targets_hit.append(entity)
 
 
+func _apply_rage_effect() -> void:
+	var entities: Array = controller.get_battle_entities()
+	for entity in entities:
+		if _is_entity_dead(entity) or entity.team != team:
+			continue
+		if entity.get("entity_kind") == null or entity.entity_kind != "unit":
+			continue
+		var dist: float = cast_position.distance_to(entity.global_position)
+		if dist <= radius:
+			if entity.has_method("apply_rage"):
+				entity.apply_rage(rage_duration, rage_speed_mult, rage_damage_mult)
+			_targets_hit.append(entity)
+
+
 func _build_lightning_chain() -> void:
 	var entities: Array = controller.get_battle_entities()
 	var candidates: Array = []
 	for entity in entities:
-		if entity.is_dead or entity.team == team:
+		if _is_entity_dead(entity) or entity.team == team:
 			continue
 		var dist: float = cast_position.distance_to(entity.global_position)
 		if dist <= radius * 1.5:
@@ -94,6 +127,16 @@ func _build_lightning_chain() -> void:
 	var count: int = min(lightning_count, candidates.size())
 	for i in range(count):
 		_lightning_chain.append(candidates[i].entity)
+
+
+func _is_target_alive_and_valid(target: Node) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	if target.has_method("get_is_dead"):
+		return not target.get_is_dead()
+	if target.get("is_dead") != null:
+		return not target.is_dead
+	return true
 
 
 func _process(delta: float) -> void:
@@ -106,10 +149,10 @@ func _process(delta: float) -> void:
 		var interval: float = 0.15
 		while _lightning_timer >= interval and _lightning_index < _lightning_chain.size():
 			_lightning_timer -= interval
-			var target: Node = _lightning_chain[_lightning_index]
-			if is_instance_valid(target) and not target.is_dead:
-				target.take_damage(lightning_damage, self)
-				controller.on_damage_dealt(target, self)
+			var raw_target: Node = _lightning_chain[_lightning_index] if _lightning_index < _lightning_chain.size() and is_instance_valid(_lightning_chain[_lightning_index]) else null
+			if raw_target != null and _is_target_alive_and_valid(raw_target):
+				raw_target.take_damage(lightning_damage, self)
+				controller.on_damage_dealt(raw_target, self)
 			_lightning_index += 1
 
 	if _progress >= _duration:
@@ -131,6 +174,8 @@ func _draw() -> void:
 			_draw_freeze(t, team_color)
 		"lightning":
 			_draw_lightning(t, team_color)
+		"rage":
+			_draw_rage(t, team_color)
 
 
 func _draw_fireball(t: float, team_color: Color) -> void:
@@ -169,6 +214,25 @@ func _draw_freeze(t: float, team_color: Color) -> void:
 		draw_circle(Vector2.ZERO, ring_r, Color(0.5, 0.8, 1.0, ring_a), false, 2.0)
 
 
+func _draw_rage(t: float, team_color: Color) -> void:
+	var alpha: float = (1.0 - t) * 0.8
+	var current_radius: float = radius * (0.4 + t * 0.6)
+	var rage_color := Color(1.0, 0.15, 0.35, alpha * 0.4)
+	draw_circle(Vector2.ZERO, current_radius, rage_color)
+	draw_circle(Vector2.ZERO, current_radius, Color(1.0, 0.4, 0.5, alpha * 0.6), false, 3.0)
+	for spark in range(12):
+		var angle: float = float(spark) * TAU / 12.0 + t * 3.0
+		var dist: float = current_radius * (0.5 + randf() * 0.5)
+		var sx: float = cos(angle) * dist
+		var sy: float = sin(angle) * dist
+		var spark_a: float = alpha * (0.7 + randf() * 0.3)
+		draw_circle(Vector2(sx, sy), 4.0 * (1.0 - t * 0.5), Color(1.0, 0.5 + randf() * 0.3, 0.4, spark_a))
+	for ring in range(3):
+		var ring_r: float = current_radius * (0.25 + ring * 0.25)
+		var ring_a: float = alpha * (0.5 - ring * 0.15)
+		draw_circle(Vector2.ZERO, ring_r, Color(1.0, 0.3, 0.4, ring_a), false, 2.5)
+
+
 func _draw_lightning(t: float, team_color: Color) -> void:
 	var alpha: float = (1.0 - t) * 0.9
 	var lightning_color := Color(1.0, 0.95, 0.5, alpha)
@@ -177,13 +241,11 @@ func _draw_lightning(t: float, team_color: Color) -> void:
 	for i in range(_lightning_index):
 		if i >= _lightning_chain.size():
 			break
-		var target: Node = _lightning_chain[i]
+		var raw_target: Node = _lightning_chain[i] if is_instance_valid(_lightning_chain[i]) else null
 		next_origin = origin
-		if not is_instance_valid(target):
+		if raw_target == null or not _is_target_alive_and_valid(raw_target):
 			continue
-		if target.get("is_dead") != null and target.is_dead:
-			continue
-		var target_pos: Vector2 = target.global_position
+		var target_pos: Vector2 = raw_target.global_position
 		var end_pos: Vector2 = to_local(target_pos)
 		_draw_lightning_bolt(origin, end_pos, lightning_color, 3.0)
 		draw_circle(end_pos, 8.0 * (1.0 - t), Color(1.0, 1.0, 0.8, alpha * 0.8))

@@ -4,3 +4,5 @@
 
 [node name="Main" type="Node2D" unique_id=1362752672]
 script = ExtResource("1_main")
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1188607822]
