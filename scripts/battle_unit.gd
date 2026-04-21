@@ -20,6 +20,7 @@ var splash_damage: float = 0.0
 var splash_radius: float = 0.0
 var heal_amount: float = 0.0
 var heal_cooldown: float = 0.0
+var heal_range: float = 0.0
 var is_dead: bool = false
 var current_target: Node = null
 var icon_texture: Texture2D = null
@@ -72,6 +73,7 @@ func setup(config: Dictionary, team_id: int, game_controller: Node, spawn_positi
 	hp = max_hp
 	speed = float(config.get("speed", 70.0))
 	attack_range = float(config.get("range", 24.0))
+	heal_range = float(config.get("range", 130.0))
 	damage = float(config.get("damage", 20.0))
 	attack_cooldown = float(config.get("cooldown", 1.0))
 	radius = float(config.get("radius", 18.0))
@@ -366,7 +368,7 @@ func _process_healer(delta: float) -> void:
 	if heal_target != null:
 		var offset: Vector2 = heal_target.global_position - global_position
 		var distance: float = offset.length()
-		var desired_distance: float = attack_range + radius + float(heal_target.radius)
+		var desired_distance: float = heal_range + radius + float(heal_target.radius)
 		if distance <= desired_distance:
 			if _heal_timer <= 0.0:
 				_perform_heal(heal_target)
