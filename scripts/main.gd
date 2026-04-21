@@ -50,7 +50,7 @@ var troop_defs: Dictionary:
 	get:
 		return CardDatabaseClass.troop_defs
 
-var enemy_deck = ["knight", "archer", "giant", "wizard", "fireball", "rage", "healer", "bomber"]
+var enemy_deck = ["knight", "archer", "giant", "wizard", "fireball", "freeze", "lightning", "rage", "healer", "bomber"]
 var player_deck = ["knight", "archer", "giant", "mini_pekka", "wizard", "fireball", "freeze", "lightning", "rage", "healer", "bomber"]
 
 var player_elixir := 5.0
