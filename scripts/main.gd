@@ -186,7 +186,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _load_card_icons() -> void:
-	var troop_cards := ["knight", "archer", "giant", "mini_pekka", "wizard"]
+	var troop_cards := ["knight", "archer", "giant", "mini_pekka", "wizard", "healer", "bomber"]
 	for card_id in troop_cards:
 		card_icon_textures[card_id] = load_svg_texture("res://assets/units/%s.svg" % card_id, 1.35)
 	var spell_cards := ["fireball", "freeze", "lightning", "rage"]
